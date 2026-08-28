@@ -61,6 +61,7 @@ import java.io.File
 
 enum class ShelfTab(val title: String) {
     LOOKS("Looks"),
+    EFFECTS("Effects"),
     FINE_TUNE("Tune"),
     CAPTURE("Pro"),
     DOUBLE_EXP("Blend")
@@ -83,6 +84,18 @@ fun BottomControlShelf(
     onLookIntensityChanged: (Float) -> Unit,
     lookHalation: Float,
     onLookHalationChanged: (Float) -> Unit,
+    // Effects & Creative Controls
+    temporalEchoDecay: Float = 0.75f,
+    onTemporalEchoDecayChanged: (Float) -> Unit = {},
+    motionThreshold: Float = 0.08f,
+    onMotionThresholdChanged: (Float) -> Unit = {},
+    lightTrailDecay: Float = 0.94f,
+    onLightTrailDecayChanged: (Float) -> Unit = {},
+    chromaticAberration: Float = 0.0f,
+    onChromaticAberrationChanged: (Float) -> Unit = {},
+    onClearLightTrails: () -> Unit = {},
+    currentWheelParam: WheelParameter = WheelParameter.LOOK_INTENSITY,
+    onSelectWheelParam: (WheelParameter) -> Unit = {},
     // Exposure & Format
     evBias: Float,
     onEvBiasChanged: (Float) -> Unit,
@@ -127,10 +140,10 @@ fun BottomControlShelf(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val tabs = if (cameraMode == CameraMode.DOUBLE_EXPOSURE) {
-                listOf(ShelfTab.DOUBLE_EXP, ShelfTab.LOOKS, ShelfTab.FINE_TUNE, ShelfTab.CAPTURE)
-            } else {
-                listOf(ShelfTab.LOOKS, ShelfTab.FINE_TUNE, ShelfTab.CAPTURE)
+            val tabs = when (cameraMode) {
+                CameraMode.DOUBLE_EXPOSURE -> listOf(ShelfTab.DOUBLE_EXP, ShelfTab.LOOKS, ShelfTab.EFFECTS, ShelfTab.FINE_TUNE, ShelfTab.CAPTURE)
+                CameraMode.LIGHT_TRAILS, CameraMode.TEMPORAL_ECHO, CameraMode.MOTION_EXPOSURE -> listOf(ShelfTab.EFFECTS, ShelfTab.LOOKS, ShelfTab.FINE_TUNE, ShelfTab.CAPTURE)
+                else -> listOf(ShelfTab.LOOKS, ShelfTab.EFFECTS, ShelfTab.FINE_TUNE, ShelfTab.CAPTURE)
             }
 
             tabs.forEach { tab ->
@@ -143,7 +156,7 @@ fun BottomControlShelf(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { currentTab = tab }
-                        .padding(horizontal = 12.dp, vertical = 2.dp)
+                        .padding(horizontal = 10.dp, vertical = 2.dp)
                 )
             }
         }
@@ -267,17 +280,44 @@ fun BottomControlShelf(
                 }
             }
 
+            ShelfTab.EFFECTS -> {
+                val currentParamValue = when (currentWheelParam) {
+                    WheelParameter.ECHO_DECAY -> temporalEchoDecay
+                    WheelParameter.MOTION_THRESHOLD -> motionThreshold
+                    WheelParameter.LIGHT_DECAY -> lightTrailDecay
+                    WheelParameter.CHROMATIC_ABERRATION -> chromaticAberration
+                    WheelParameter.LOOK_INTENSITY -> lookIntensity
+                    WheelParameter.HALATION_GLOW -> lookHalation
+                }
+
+                ParameterWheel(
+                    currentParam = currentWheelParam,
+                    paramValue = currentParamValue,
+                    onParamChanged = { param, value ->
+                        when (param) {
+                            WheelParameter.ECHO_DECAY -> onTemporalEchoDecayChanged(value)
+                            WheelParameter.MOTION_THRESHOLD -> onMotionThresholdChanged(value)
+                            WheelParameter.LIGHT_DECAY -> onLightTrailDecayChanged(value)
+                            WheelParameter.CHROMATIC_ABERRATION -> onChromaticAberrationChanged(value)
+                            WheelParameter.LOOK_INTENSITY -> onLookIntensityChanged(value)
+                            WheelParameter.HALATION_GLOW -> onLookHalationChanged(value)
+                        }
+                    },
+                    onSelectParam = onSelectWheelParam
+                )
+            }
+
             ShelfTab.FINE_TUNE -> {
                 Column(
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Look Intensity & Halation Sliders
+                    // Look Intensity Slider
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Intensity ${(lookIntensity * 100).toInt()}%",
+                            text = "Mix ${(lookIntensity * 100).toInt()}%",
                             color = TextSecondary,
                             fontSize = 10.sp,
                             modifier = Modifier.width(76.dp)
@@ -288,7 +328,7 @@ fun BottomControlShelf(
                             valueRange = 0.0f..1.0f,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(24.dp),
+                                .height(22.dp),
                             colors = SliderDefaults.colors(
                                 thumbColor = AuroraCyan,
                                 activeTrackColor = AuroraCyan,
@@ -297,12 +337,13 @@ fun BottomControlShelf(
                         )
                     }
 
+                    // Halation Glow Slider
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Halation ${(lookHalation * 100).toInt()}%",
+                            text = "Glow ${(lookHalation * 100).toInt()}%",
                             color = TextSecondary,
                             fontSize = 10.sp,
                             modifier = Modifier.width(76.dp)
@@ -313,10 +354,36 @@ fun BottomControlShelf(
                             valueRange = 0.0f..0.60f,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(24.dp),
+                                .height(22.dp),
                             colors = SliderDefaults.colors(
                                 thumbColor = AuroraAmber,
                                 activeTrackColor = AuroraAmber,
+                                inactiveTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
+
+                    // Chromatic Aberration Slider
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Aberr ${(chromaticAberration * 100).toInt()}%",
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            modifier = Modifier.width(76.dp)
+                        )
+                        Slider(
+                            value = chromaticAberration,
+                            onValueChange = onChromaticAberrationChanged,
+                            valueRange = 0.0f..1.0f,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(22.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFFFF4081),
+                                activeTrackColor = Color(0xFFFF4081),
                                 inactiveTrackColor = Color(0xFF333333)
                             )
                         )
@@ -369,6 +436,20 @@ fun BottomControlShelf(
                         ),
                         modifier = Modifier.height(28.dp)
                     )
+
+                    // Clear Light Trails Reset Action
+                    if (cameraMode == CameraMode.LIGHT_TRAILS) {
+                        FilterChip(
+                            selected = false,
+                            onClick = onClearLightTrails,
+                            label = { Text("🧹 Reset Trails", fontSize = 10.sp, color = AuroraAmber) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = Color(0xFF2A1B00),
+                                labelColor = AuroraAmber
+                            ),
+                            modifier = Modifier.height(28.dp)
+                        )
+                    }
 
                     // Format Chips
                     FormatMode.values().forEach { mode ->
@@ -462,3 +543,4 @@ fun BottomControlShelf(
         }
     }
 }
+

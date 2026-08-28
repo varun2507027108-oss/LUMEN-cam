@@ -2,6 +2,9 @@ package com.auroracam.app.ui
 
 enum class CameraMode(val title: String) {
     STANDARD("Standard"),
+    TEMPORAL_ECHO("Temporal Echo"),
+    MOTION_EXPOSURE("Motion Only"),
+    LIGHT_TRAILS("Light Trails"),
     DOUBLE_EXPOSURE("Double Exposure")
 }
 
