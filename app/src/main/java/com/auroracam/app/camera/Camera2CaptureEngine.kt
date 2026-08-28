@@ -38,6 +38,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 class Camera2CaptureEngine(
@@ -81,6 +82,7 @@ class Camera2CaptureEngine(
     private var evStep: Float = 1.0f / 6.0f
 
     private var isProbeCompleted = false
+    private var currentMeteringRectangle: MeteringRectangle? = null
 
     private fun startBackgroundThread() {
         if (cameraThread == null) {
@@ -146,12 +148,19 @@ class Camera2CaptureEngine(
         }
 
         // EV Compensation limits
-        characteristics?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)?.let {
-            evRange = it
+        val compRange = characteristics?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+        if (compRange != null && compRange.upper > compRange.lower) {
+            evRange = compRange
+        } else {
+            evRange = Range(-12, 12)
         }
-        characteristics?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.let {
-            evStep = it.numerator.toFloat() / it.denominator.toFloat()
+        val compStep = characteristics?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+        if (compStep != null && compStep.denominator > 0 && compStep.numerator > 0) {
+            evStep = compStep.numerator.toFloat() / compStep.denominator.toFloat()
+        } else {
+            evStep = 1.0f / 3.0f
         }
+        Log.i(TAG, "EV Compensation initialized: range=$evRange, step=$evStep")
 
         try {
             @SuppressLint("MissingPermission")
@@ -201,13 +210,7 @@ class Camera2CaptureEngine(
                 override fun onConfigured(session: CameraCaptureSession) {
                     Log.i(TAG, "=== CAMERA2 CAPTURE SESSION CONFIGURED SUCCESSFULLY ===")
                     captureSession = session
-
-                    if (!isProbeCompleted) {
-                        isProbeCompleted = true
-                        cameraHandler?.let {
-                            CameraProbe.executeRoundTripProbe(session, yuvReader.surface, it)
-                        }
-                    }
+                    isProbeCompleted = true
 
                     startRepeatingPreview()
                     onSessionReady?.invoke()
@@ -238,6 +241,11 @@ class Camera2CaptureEngine(
 
                 val evIndex = (currentEvBias / evStep).toInt().coerceIn(evRange.lower, evRange.upper)
                 set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIndex)
+
+                currentMeteringRectangle?.let {
+                    set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(it))
+                    set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(it))
+                }
             }
 
             session.setRepeatingRequest(reqBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
@@ -269,8 +277,47 @@ class Camera2CaptureEngine(
 
     fun setExposureCompensation(ev: Float) {
         currentEvBias = ev
-        startRepeatingPreview()
-        Log.i(TAG, "Set EV Bias: $ev")
+        val session = captureSession ?: return
+        val device = cameraDevice ?: return
+        val preview = previewSurface ?: return
+
+        try {
+            val reqBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(preview)
+                set(CaptureRequest.CONTROL_AF_MODE, if (currentMeteringRectangle != null) CaptureRequest.CONTROL_AF_MODE_AUTO else CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AE_LOCK, isAeAwbLocked)
+                set(CaptureRequest.CONTROL_AWB_LOCK, isAeAwbLocked)
+
+                val evIndex = if (evStep > 0.001f) {
+                    (currentEvBias / evStep).roundToInt().coerceIn(evRange.lower, evRange.upper)
+                } else 0
+                set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIndex)
+
+                currentMeteringRectangle?.let {
+                    set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(it))
+                    set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(it))
+                }
+            }
+            session.setRepeatingRequest(reqBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    result: TotalCaptureResult
+                ) {
+                    super.onCaptureCompleted(session, request, result)
+                    latestCaptureResult.set(result)
+                    val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
+                    val expTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+                    val expTimeFormatted = if (expTime != null && expTime > 0) "1/${(1_000_000_000.0 / expTime).toInt()}s" else "N/A"
+                    lastTelemetry = CaptureSaver.Telemetry(iso = iso ?: 0, expTimeFormatted = expTimeFormatted)
+                }
+            }, cameraHandler)
+            Log.i(TAG, "EV Bias updated: ev=$ev, step=$evStep -> index=${if (evStep > 0.001f) (currentEvBias / evStep).roundToInt() else 0}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update exposure compensation", e)
+        }
     }
 
     fun setManualExposure(enabled: Boolean, shutterSpeedNanos: Long = 500_000_000L, iso: Int = 50) {
@@ -308,19 +355,39 @@ class Camera2CaptureEngine(
         val centerY = (yNorm * sensorRect.height()).toInt().coerceIn(focusAreaSize, sensorRect.height() - focusAreaSize)
         val afRect = Rect(centerX - focusAreaSize, centerY - focusAreaSize, centerX + focusAreaSize, centerY + focusAreaSize)
         val meteringRectangle = MeteringRectangle(afRect, MeteringRectangle.METERING_WEIGHT_MAX)
+        currentMeteringRectangle = meteringRectangle
 
         try {
-            val reqBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            val cancelReq = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(preview)
+                set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_CANCEL)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+            }
+            session.capture(cancelReq.build(), null, cameraHandler)
+
+            val repBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(preview)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(meteringRectangle))
                 set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(meteringRectangle))
+                val evIndex = (currentEvBias / evStep).toInt().coerceIn(evRange.lower, evRange.upper)
+                set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIndex)
+            }
+            session.setRepeatingRequest(repBuilder.build(), null, cameraHandler)
+
+            val triggerReq = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(preview)
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(meteringRectangle))
+                set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(meteringRectangle))
                 set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START)
             }
-            session.capture(reqBuilder.build(), null, cameraHandler)
+            session.capture(triggerReq.build(), null, cameraHandler)
             Log.i(TAG, "Tap-to-focus triggered at norm($xNorm, $yNorm), region=$afRect")
         } catch (e: Exception) {
-            Log.e(TAG, "Tap to focus trigger failed", e)
+            Log.e(TAG, "Tap to focus trigger failed: ${e.message}", e)
         }
     }
 

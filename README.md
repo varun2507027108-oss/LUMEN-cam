@@ -1,46 +1,73 @@
 # AuroraCam
 
-> Live double exposure, temporal effects, and signature film-style color grading — rendered entirely on the GPU in the viewfinder before pressing the shutter.
+> Live double exposure, real-time 3D LUT color grading, and temporal effects — rendered entirely on the GPU in the viewfinder before pressing the shutter.
 
-AuroraCam is an open-source real-time creative camera application for Android built with Jetpack Compose, CameraX, and OpenGL ES 3.0.
+AuroraCam is a modern, high-performance creative camera application for Android built with **Jetpack Compose**, **direct Camera2 HAL integration**, and **OpenGL ES 3.0**.
 
 ---
 
-## Device & Hardware Target
+## Key Features
 
-- **Primary Target Device:** OnePlus Nord CE 3 Lite (CPH2467)
-- **OS / Platform:** Android 15 (API 35), minSdk 29
-- **SoC / GPU:** Snapdragon 695 5G / Adreno 619 (OpenGL ES 3.2 supported)
-- **Display:** 120Hz LCD
-- **Camera2 Hardware Level:** `LEVEL_3`
-- **Supported Public Capture Resolutions:**
-  - 4:3 &rarr; `3200x2400` (Max)
-  - 1:1 &rarr; `2448x2448`
-  - 16:9 &rarr; `3840x2160`
-  - 20:9 &rarr; `4000x1800`
+### 🎨 Live 3D LUT Color Grading & Tone Engine
+- **Hardware-Accelerated 3D Textures:** Parses `.cube` files (standard 17³, 33³, 64³ grid sizes) directly on the GPU using `GL_TEXTURE_3D` with trilinear filtering.
+- **Built-in Presets:** Warm Gold, Cyberpunk, Cinema, Monochrome, and Emerald with instantaneous live preview.
+- **Custom LUT Import:** Import custom `.cube` grading LUTs from device storage via Android Storage Access Framework (SAF).
+- **16-Bit Float HDR Pipeline:** High dynamic range intermediate framebuffers (`GL_RGBA16F`) preventing color banding in dark gradients and bright highlights.
+- **Look Intensity & Halation Glow:** Real-time bloom/glow blur shader simulating vintage analog film halation around high-contrast edges.
+
+### 🎯 Precision Cinema Focus Reticle & Integrated Exposure Slider
+- **Tap-to-Focus 3A Metering:** Tap anywhere on the viewfinder to dynamically update Camera2 `CONTROL_AF_REGIONS` and `CONTROL_AE_REGIONS` with auto-focus trigger cycles.
+- **Cinema-Grade Reticle:** Minimalist golden corner brackets with center targeting reticle dot.
+- **Integrated EV Exposure Slider:** Vertical draggable Sun slider positioned seamlessly next to the focus reticle. Adjust exposure bias (-2.0 EV to +2.0 EV) in real-time with live monospace readout (`+0.7`, `-1.3`).
+- **Edge-Aware Positioning:** Automatically adapts to screen edges so sliders and reticles never clip off-screen.
+
+### 📐 Framing & Aspect Ratio Formats
+- **XPAN Panoramic (65:24):** True cinematic ultra-wide crop with orange viewfinder corner guides.
+- **Square (1:1):** Classic medium format square framing with translucent letterboxing.
+- **Standard (4:3):** Full sensor resolution capture.
+
+### 🎛️ Bottom Options Shelf Ergonomics
+- **Unobstructed Viewfinder:** All camera controls and menus are placed cleanly **below the shutter button**, maximizing viewfinder clarity.
+- **Organized Control Tabs:**
+  - **Looks:** Quick preset selector, `.cube` file importer, and reset.
+  - **Tune:** Fine-tune Look intensity (0–100%) and halation glow (0–60%).
+  - **Pro:** QuickStack burst toggle, 16-bit Float FBO toggle, and aspect ratio selector.
+  - **Blend:** Real-time double exposure blend mode selector (Screen, Overlay, Add, Lighten, Multiply), opacity scrubber, and retake tools.
+
+### ⚡ QuickStack Computational Burst
+- High-speed 6-frame burst capture with phase-correlation spatial alignment and GPU temporal stacking for noise reduction in low-light scenes.
+
+### 📸 Live GPU Double Exposure
+- Two-stage multi-exposure pipeline:
+  - **Stage 1 (Base):** Capture and lock first exposure with live silhouette exposure helper.
+  - **Stage 2 (Composite):** Real-time viewfinder blending over the live camera stream with live opacity and horizontal flip controls.
+  - Generates full provenance output: saves original base frame, second frame, and blended composite to disk with embedded metadata.
 
 ---
 
 ## Architectural Principles
 
-1. **Zero CPU pixel work in the preview loop:** Frames stream directly from CameraX `Surface(SurfaceTexture)` &rarr; `GL_TEXTURE_EXTERNAL_OES` &rarr; GL pass shaders &rarr; Screen FBO.
-2. **Proper coordinate mapping:** Always uses `SurfaceTexture.getTransformMatrix()` and shader aspect-ratio correction matrices to eliminate distortion, stretch, and flip.
-3. **Pure GPU pipeline:** One GL thread owns the context and surface texture. CPU computation is restricted to single-shot still saving upon shutter press.
-4. **Clean scoped storage:** Photos saved to `Pictures/AuroraCam` via MediaStore `IS_PENDING` workflow with `RELATIVE_PATH`.
+1. **Zero CPU pixel work in the preview loop:** Frames stream directly from Camera2 `Surface(SurfaceTexture)` &rarr; `GL_TEXTURE_EXTERNAL_OES` &rarr; GPU multi-pass shaders &rarr; Screen FBO.
+2. **Direct Camera2 Architecture:** Direct HAL stream management with zero buffer starvation, atomic telemetry collection (ISO, Shutter speed), and single-shot high-res captures.
+3. **Single GL context ownership:** Pure multi-threaded rendering pipeline with synchronized frame invalidation.
+4. **Scoped Storage Integration:** Photos saved seamlessly to `Pictures/AuroraCam` via MediaStore API with complete EXIF and telemetry metadata.
 
 ---
 
 ## Building and Running
 
 ### Requirements
-- Android Studio Ladybug (2024.2+) or Hedgehog+
+- Android Studio Ladybug (2024.2+) or newer
 - JDK 17
 - Android SDK 35 (minSdk 29)
 
-### CLI Build
+### CLI Build & Test
 ```bash
 # Build Debug APK
 ./gradlew assembleDebug
+
+# Run Unit Tests
+./gradlew testDebugUnitTest
 
 # Install to connected device via ADB
 adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -50,7 +77,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## Automated Releases via GitHub Actions
 
-Pushing a tag formatted as `v*` (e.g. `v0.1.0`) automatically builds the debug APK and attaches it to the GitHub Release draft.
+Pushing a tag formatted as `v*` (e.g. `v0.2.0`) automatically triggers GitHub Actions CI/CD to build the release APK and attach it to GitHub Releases.
 
 ---
 
