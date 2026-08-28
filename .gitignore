@@ -1,0 +1,28 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+app/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+
+# Keystore & Signing Secrets
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+secret.properties
+google-services.json
+
+# Exclude embedded folder
+glm cam/
+
+# Node / Web artifacts
+node_modules/
+.next/
+*.log
