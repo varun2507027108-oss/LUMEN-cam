@@ -5,7 +5,8 @@ import android.util.Log
 
 class Fbo(
     val width: Int,
-    val height: Int
+    val height: Int,
+    val useHalfFloat: Boolean = false
 ) {
     companion object {
         private const val TAG = "AuroraFbo"
@@ -14,6 +15,8 @@ class Fbo(
     var fboId: Int = 0
         private set
     var textureId: Int = 0
+        private set
+    var isHalfFloat: Boolean = false
         private set
 
     init {
@@ -26,43 +29,81 @@ class Fbo(
         fboId = fbos[0]
         textureId = textures[0]
 
-        // Allocate 2D RGBA8 texture
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
-        GLES30.glTexImage2D(
-            GLES30.GL_TEXTURE_2D,
-            0,
-            GLES30.GL_RGBA8,
-            width,
-            height,
-            0,
-            GLES30.GL_RGBA,
-            GLES30.GL_UNSIGNED_BYTE,
-            null
-        )
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
 
-        // Attach texture to FBO
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fboId)
-        GLES30.glFramebufferTexture2D(
-            GLES30.GL_FRAMEBUFFER,
-            GLES30.GL_COLOR_ATTACHMENT0,
-            GLES30.GL_TEXTURE_2D,
-            textureId,
-            0
-        )
+        var complete = false
+        if (useHalfFloat) {
+            // Allocate 2D RGBA16F half-float texture
+            GLES30.glTexImage2D(
+                GLES30.GL_TEXTURE_2D,
+                0,
+                GLES30.GL_RGBA16F,
+                width,
+                height,
+                0,
+                GLES30.GL_RGBA,
+                GLES30.GL_HALF_FLOAT,
+                null
+            )
 
-        val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
-        if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
-            Log.e(TAG, "Framebuffer incomplete: status 0x${Integer.toHexString(status)}")
-            throw RuntimeException("Framebuffer incomplete: 0x${Integer.toHexString(status)}")
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fboId)
+            GLES30.glFramebufferTexture2D(
+                GLES30.GL_FRAMEBUFFER,
+                GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_TEXTURE_2D,
+                textureId,
+                0
+            )
+
+            val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
+            if (status == GLES30.GL_FRAMEBUFFER_COMPLETE) {
+                complete = true
+                isHalfFloat = true
+                Log.i(TAG, "Allocated GL_RGBA16F FBO (${width}x${height}) successfully")
+            } else {
+                Log.w(TAG, "GL_RGBA16F FBO incomplete (0x${Integer.toHexString(status)}), falling back to GL_RGBA8")
+            }
+        }
+
+        if (!complete) {
+            // Allocate standard 2D RGBA8 texture
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+            GLES30.glTexImage2D(
+                GLES30.GL_TEXTURE_2D,
+                0,
+                GLES30.GL_RGBA8,
+                width,
+                height,
+                0,
+                GLES30.GL_RGBA,
+                GLES30.GL_UNSIGNED_BYTE,
+                null
+            )
+
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fboId)
+            GLES30.glFramebufferTexture2D(
+                GLES30.GL_FRAMEBUFFER,
+                GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_TEXTURE_2D,
+                textureId,
+                0
+            )
+
+            val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
+            if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
+                Log.e(TAG, "Framebuffer incomplete: status 0x${Integer.toHexString(status)}")
+                throw RuntimeException("Framebuffer incomplete: 0x${Integer.toHexString(status)}")
+            }
+            isHalfFloat = false
         }
 
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-        GLConstants.checkGLError("Fbo.create (${width}x${height})")
+        GLConstants.checkGLError("Fbo.create (${width}x${height}, halfFloat=$isHalfFloat)")
     }
 
     fun bind() {

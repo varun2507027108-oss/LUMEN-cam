@@ -66,6 +66,8 @@ fun LookOverlay(
     onResetToDefaultLut: () -> Unit,
     currentFormat: FormatMode,
     onFormatChanged: (FormatMode) -> Unit,
+    isLegacyJpeg: Boolean = false,
+    onLegacyJpegToggled: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showLutMenu by remember { mutableStateOf(false) }
@@ -185,6 +187,13 @@ fun LookOverlay(
                         text = { Text("⚡ Generate Debug LUTs (mono, invert)") },
                         onClick = {
                             onGenerateDebugLuts()
+                            showLutMenu = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (isLegacyJpeg) "🔄 Capture: JPEG (Legacy)" else "🚀 Capture: YUV 420 (Single-Encode)") },
+                        onClick = {
+                            onLegacyJpegToggled()
                             showLutMenu = false
                         }
                     )

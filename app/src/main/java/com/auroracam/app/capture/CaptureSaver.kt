@@ -45,7 +45,7 @@ object CaptureSaver {
         context: Context,
         bitmap: Bitmap,
         fileName: String,
-        quality: Int = 95
+        quality: Int = 97
     ): Uri? = withContext(Dispatchers.IO) {
         val stream = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
@@ -84,7 +84,7 @@ object CaptureSaver {
             contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(uri, contentValues, null, null)
 
-            Log.i(TAG, "Saved image: $uri (path: Pictures/$ALBUM_NAME/$fileName)")
+            Log.i(TAG, "Saved image: $uri (path: Pictures/$ALBUM_NAME/$fileName, size: ${jpegBytes.size} bytes / ${"%.1f".format(jpegBytes.size / 1024.0)} KB)")
             uri
         } catch (e: Exception) {
             Log.e(TAG, "Error writing image $fileName to MediaStore", e)

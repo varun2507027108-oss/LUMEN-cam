@@ -83,6 +83,7 @@ fun CameraScreen() {
     var lookHalation by remember { mutableFloatStateOf(0.20f) }
     var activeLutName by remember { mutableStateOf(lutManager.activeLutName) }
     var cachedLutsList by remember { mutableStateOf<List<File>>(emptyList()) }
+    var isLegacyJpeg by remember { mutableStateOf(cameraController.isLegacyJpegPath()) }
 
     var rendererRef by remember { mutableStateOf<AuroraRenderer?>(null) }
 
@@ -254,6 +255,12 @@ fun CameraScreen() {
                 },
                 currentFormat = currentFormat,
                 onFormatChanged = { format -> currentFormat = format },
+                isLegacyJpeg = isLegacyJpeg,
+                onLegacyJpegToggled = {
+                    val next = !isLegacyJpeg
+                    isLegacyJpeg = next
+                    cameraController.setLegacyJpegPath(next)
+                },
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
             )
 
@@ -308,8 +315,13 @@ fun CameraScreen() {
                                     val uri = CaptureSaver.saveBitmap(
                                         context = context,
                                         bitmap = cropped,
-                                        fileName = "${CaptureSaver.generateBaseFileName()}.jpg"
+                                        fileName = "${CaptureSaver.generateBaseFileName()}.jpg",
+                                        quality = 97
                                     )
+                                    if (cropped != gradedBitmap) {
+                                        cropped.recycle()
+                                    }
+                                    gradedBitmap.recycle()
                                     val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
                                     withContext(Dispatchers.Main) {
                                         lastCapturedThumbnail = thumb
@@ -339,10 +351,17 @@ fun CameraScreen() {
                                         val croppedSecond = currentFormat.cropBitmap(secondBmp)
                                         val croppedComp = currentFormat.cropBitmap(compositeBmp)
 
-                                        // Save clean first and second; graded composite
-                                        CaptureSaver.saveBitmap(context, croppedFirst, firstFile)
-                                        CaptureSaver.saveBitmap(context, croppedSecond, secondFile)
-                                        val compUri = CaptureSaver.saveBitmap(context, croppedComp, compFile)
+                                        // Save clean first and second; graded composite with Q97
+                                        CaptureSaver.saveBitmap(context, croppedFirst, firstFile, quality = 97)
+                                        CaptureSaver.saveBitmap(context, croppedSecond, secondFile, quality = 97)
+                                        val compUri = CaptureSaver.saveBitmap(context, croppedComp, compFile, quality = 97)
+
+                                        if (croppedFirst != firstBmp) croppedFirst.recycle()
+                                        if (croppedSecond != secondBmp) croppedSecond.recycle()
+                                        if (croppedComp != compositeBmp) croppedComp.recycle()
+                                        firstBmp.recycle()
+                                        secondBmp.recycle()
+                                        compositeBmp.recycle()
 
                                         DxMetadata.save(
                                             context,

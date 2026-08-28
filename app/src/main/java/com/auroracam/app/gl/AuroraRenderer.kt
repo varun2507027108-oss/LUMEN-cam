@@ -88,6 +88,9 @@ class AuroraRenderer(
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         Log.i(TAG, "onSurfaceCreated: Initializing GLES 3.0 Renderer, Look Chain & DX passes")
+        val extensions = GLES30.glGetString(GLES30.GL_EXTENSIONS) ?: ""
+        val hasColorBufferFloat = extensions.contains("GL_EXT_color_buffer_float") || extensions.contains("GL_OES_texture_half_float")
+        Log.i(TAG, "GLES3.0 Extensions: EXT_color_buffer_float present: $hasColorBufferFloat, extensions count: ${extensions.split(" ").size}")
         GLES30.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
 
         passThroughPass.init()
@@ -130,6 +133,8 @@ class AuroraRenderer(
         viewWidth = width
         viewHeight = height
         GLES30.glViewport(0, 0, width, height)
+        Log.i(TAG, "STEP0 surface: ${width}x${height}")
+        Log.i(TAG, "STEP0 viewport: ${width}x${height}")
         Log.i(TAG, "onSurfaceChanged: Display Surface size: ${width}x${height} | glViewport set to (0, 0, ${width}, ${height})")
 
         previewSceneFbo?.release()
@@ -272,9 +277,11 @@ class AuroraRenderer(
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
             GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, sourceBitmap, 0)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+            sourceBitmap.recycle()
 
-            val gradeFbo = Fbo(w, h)
+            val gradeFbo = Fbo(w, h, useHalfFloat = false)
             gradeFbo.bind()
+            Log.i(TAG, "renderGradedStill BEGIN: sourceBitmap=${w}x${h}, gradeFbo.isHalfFloat=${gradeFbo.isHalfFloat}, viewport=${w}x${h}")
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
             val timeSeconds = ((SystemClock.elapsedRealtime() % 3600000L) / 1000f)
@@ -324,8 +331,8 @@ class AuroraRenderer(
 
             val firstBmp = readFboToBitmap(firstExposureFbo ?: return@queueEvent, flipY = true)
 
-            // 1. Blend raw composite
-            val compFbo = Fbo(w, h)
+            // 1. Blend raw composite (creative pass stays standard RGBA8)
+            val compFbo = Fbo(w, h, useHalfFloat = false)
             compFbo.bind()
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
             compositeBlendPass.render(
@@ -336,10 +343,10 @@ class AuroraRenderer(
                 flipA = dxFlipFirst
             )
 
-            // 2. Grade composite with Signature Look if enabled
+            // 2. Grade composite with Signature Look if enabled (Standard RGBA8)
             val compositeBmp: Bitmap
             if (isLookEnabled && lookIntensity > 0.0f) {
-                val gradedFbo = Fbo(w, h)
+                val gradedFbo = Fbo(w, h, useHalfFloat = false)
                 gradedFbo.bind()
                 GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
@@ -383,12 +390,36 @@ class AuroraRenderer(
 
     private fun readFboToBitmap(fbo: Fbo, flipY: Boolean = true): Bitmap {
         fbo.bind()
+        val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
+        val errBefore = GLES30.glGetError()
         val buffer = ByteBuffer.allocateDirect(fbo.width * fbo.height * 4).order(ByteOrder.nativeOrder())
         GLES30.glReadPixels(0, 0, fbo.width, fbo.height, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buffer)
+        val errAfter = GLES30.glGetError()
         buffer.rewind()
 
         val bitmap = Bitmap.createBitmap(fbo.width, fbo.height, Bitmap.Config.ARGB_8888)
         bitmap.copyPixelsFromBuffer(buffer)
+
+        // Sample average luma of readback bitmap
+        var lumaSum = 0L
+        var samples = 0
+        val bw = bitmap.width
+        val bh = bitmap.height
+        val rowPixels = IntArray(bw)
+        for (y in 0 until bh step 10) {
+            bitmap.getPixels(rowPixels, 0, bw, 0, y, bw, 1)
+            for (x in 0 until bw step 10) {
+                val c = rowPixels[x]
+                val r = (c shr 16) and 0xFF
+                val g = (c shr 8) and 0xFF
+                val b = c and 0xFF
+                val luma = (0.299f * r + 0.587f * g + 0.114f * b).toInt()
+                lumaSum += luma
+                samples++
+            }
+        }
+        val avgLuma = if (samples > 0) lumaSum.toDouble() / samples else 0.0
+        Log.i(TAG, "readFboToBitmap: fbo=${fbo.width}x${fbo.height}, halfFloat=${fbo.isHalfFloat}, status=0x${Integer.toHexString(status)}, glReadPixels errors (before=$errBefore, after=$errAfter), readback avgLuma=${"%.2f".format(avgLuma)}")
 
         return if (flipY) {
             val matrix = android.graphics.Matrix().apply { postScale(1.0f, -1.0f) }

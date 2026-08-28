@@ -5,7 +5,9 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.params.StreamConfigurationMap
 import android.net.Uri
 import android.util.Log
 import android.util.Range
@@ -78,6 +80,19 @@ class CameraController(
         }, ContextCompat.getMainExecutor(context))
     }
 
+    fun isLegacyJpegPath(): Boolean {
+        val prefs = context.getSharedPreferences("aurora_cam_prefs", Context.MODE_PRIVATE)
+        return prefs.getBoolean("legacy_jpeg_path", true)
+    }
+
+    fun setLegacyJpegPath(enabled: Boolean) {
+        val prefs = context.getSharedPreferences("aurora_cam_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("legacy_jpeg_path", enabled).apply()
+        ContextCompat.getMainExecutor(context).execute {
+            bindCameraUseCases()
+        }
+    }
+
     @OptIn(ExperimentalCamera2Interop::class)
     private fun bindCameraUseCases() {
         val provider = cameraProvider ?: return
@@ -88,6 +103,32 @@ class CameraController(
             provider.unbindAll()
 
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+            // Query CameraCharacteristics for dynamic sizes
+            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                val chars = cameraManager.getCameraCharacteristics(id)
+                chars.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+            } ?: cameraManager.cameraIdList.firstOrNull() ?: "0"
+            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+
+            val useLegacy = isLegacyJpegPath()
+            val queryFormat = if (useLegacy) android.graphics.ImageFormat.JPEG else android.graphics.ImageFormat.YUV_420_888
+            val availableSizes: Array<Size> = map?.getOutputSizes(queryFormat) ?: emptyArray()
+
+            Log.i(TAG, "Available ${if (useLegacy) "JPEG" else "YUV"} sizes (first 10): ${availableSizes.take(10).joinToString { size -> "${size.width}x${size.height}" }}")
+
+            val fourByThreeSizes = availableSizes.filter { size ->
+                val ratio = size.width.toFloat() / size.height.toFloat()
+                kotlin.math.abs(ratio - (4f / 3f)) < 0.05f || kotlin.math.abs(ratio - (3f / 4f)) < 0.05f
+            }.sortedByDescending { size -> size.width.toLong() * size.height.toLong() }
+
+            val targetCaptureSize = fourByThreeSizes.firstOrNull()
+                ?: availableSizes.maxByOrNull { size -> size.width.toLong() * size.height.toLong() }
+                ?: PREFERRED_CAPTURE_SIZE
+
+            Log.i(TAG, "Chosen capture targetSize: ${targetCaptureSize.width}x${targetCaptureSize.height} (useLegacyJpeg=$useLegacy)")
 
             val previewResolutionSelector = ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
@@ -103,7 +144,7 @@ class CameraController(
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                 .setResolutionStrategy(
                     ResolutionStrategy(
-                        PREFERRED_CAPTURE_SIZE,
+                        targetCaptureSize,
                         ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
                     )
                 )
@@ -115,6 +156,7 @@ class CameraController(
 
             previewUseCase?.setSurfaceProvider(cameraExecutor) { request ->
                 val res = request.resolution
+                Log.i(TAG, "STEP0 buffers: request=${res.width}x${res.height} tex=${res.width}x${res.height}")
                 Log.i(TAG, "SurfaceRequest resolved preview size: ${res.width}x${res.height}")
                 st.setDefaultBufferSize(res.width, res.height)
                 Log.i(TAG, "SurfaceTexture buffer size configured to: ${res.width}x${res.height}")
@@ -126,9 +168,15 @@ class CameraController(
             val imageCaptureBuilder = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                 .setResolutionSelector(captureResolutionSelector)
-                .setJpegQuality(95)
 
-            // Section H: High-quality processing on still capture requests only
+            if (useLegacy) {
+                imageCaptureBuilder.setBufferFormat(android.graphics.ImageFormat.JPEG)
+                imageCaptureBuilder.setJpegQuality(95)
+            } else {
+                imageCaptureBuilder.setBufferFormat(android.graphics.ImageFormat.YUV_420_888)
+            }
+
+            // High-quality processing & sensor metrics logging per still capture request
             val captureExtender = androidx.camera.camera2.interop.Camera2Interop.Extender(imageCaptureBuilder)
             captureExtender.setCaptureRequestOption(
                 CaptureRequest.NOISE_REDUCTION_MODE,
@@ -138,6 +186,23 @@ class CameraController(
                 CaptureRequest.EDGE_MODE,
                 CaptureRequest.EDGE_MODE_HIGH_QUALITY
             )
+            captureExtender.setSessionCaptureCallback(object : android.hardware.camera2.CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(
+                    session: android.hardware.camera2.CameraCaptureSession,
+                    request: CaptureRequest,
+                    result: android.hardware.camera2.TotalCaptureResult
+                ) {
+                    super.onCaptureCompleted(session, request, result)
+                    val iso = result.get(android.hardware.camera2.CaptureResult.SENSOR_SENSITIVITY)
+                    val expTime = result.get(android.hardware.camera2.CaptureResult.SENSOR_EXPOSURE_TIME)
+                    val nrMode = result.get(android.hardware.camera2.CaptureResult.NOISE_REDUCTION_MODE)
+                    val edgeMode = result.get(android.hardware.camera2.CaptureResult.EDGE_MODE)
+                    val tonemapMode = result.get(android.hardware.camera2.CaptureResult.TONEMAP_MODE)
+                    val colorMode = result.get(android.hardware.camera2.CaptureResult.COLOR_CORRECTION_MODE)
+                    val expTimeFormatted = if (expTime != null && expTime > 0) "1/${(1_000_000_000.0 / expTime).toInt()}s" else "N/A"
+                    Log.i(TAG, "STILL CAPTURE SENSOR METRICS: ISO=$iso, ExpTime=${expTime}ns ($expTimeFormatted), NR_MODE=$nrMode, EDGE_MODE=$edgeMode, TONEMAP_MODE=$tonemapMode, COLOR_CORRECTION_MODE=$colorMode")
+                }
+            })
 
             imageCaptureUseCase = imageCaptureBuilder.build()
 
@@ -154,8 +219,8 @@ class CameraController(
             val resolvedPreview = previewUseCase?.resolutionInfo?.resolution
             val resolvedCapture = imageCaptureUseCase?.resolutionInfo?.resolution
             Log.i(TAG, "=== CAMERA BIND SUCCESSFUL ===")
-            Log.i(TAG, "Resolved Preview Size: ${resolvedPreview ?: "1600x1200 (preferred)"}")
-            Log.i(TAG, "Resolved ImageCapture Size: ${resolvedCapture ?: "3200x2400 (preferred)"}")
+            Log.i(TAG, "Resolved Preview Size: ${resolvedPreview ?: "1600x1200"}")
+            Log.i(TAG, "Resolved ImageCapture Size: ${resolvedCapture ?: targetCaptureSize}")
 
         } catch (exc: Exception) {
             Log.e(TAG, "Use case binding failed", exc)
@@ -280,13 +345,46 @@ class CameraController(
                 object : ImageCapture.OnImageCapturedCallback() {
                     override fun onCaptureSuccess(image: ImageProxy) {
                         val rotationDegrees = image.imageInfo.rotationDegrees
+                        val format = image.format
+                        val w = image.width
+                        val h = image.height
+                        val planesInfo = image.planes.mapIndexed { idx, plane ->
+                            "plane[$idx]: rowStride=${plane.rowStride}, pixelStride=${plane.pixelStride}, bufRemaining=${plane.buffer.remaining()}"
+                        }.joinToString("; ")
+                        Log.i(TAG, "ImageProxy captured: format=$format, size=${w}x${h}, rotation=$rotationDegrees, planes: $planesInfo")
+
                         val rawBitmap = image.toBitmap()
                         image.close()
+
+                        // Calculate average luma (sampling every 100th pixel)
+                        var lumaSum = 0L
+                        var samples = 0
+                        val bw = rawBitmap.width
+                        val bh = rawBitmap.height
+                        val rowPixels = IntArray(bw)
+                        for (y in 0 until bh step 10) {
+                            rawBitmap.getPixels(rowPixels, 0, bw, 0, y, bw, 1)
+                            for (x in 0 until bw step 10) {
+                                val c = rowPixels[x]
+                                val r = (c shr 16) and 0xFF
+                                val g = (c shr 8) and 0xFF
+                                val b = c and 0xFF
+                                val luma = (0.299f * r + 0.587f * g + 0.114f * b).toInt()
+                                lumaSum += luma
+                                samples++
+                            }
+                        }
+                        val avgLuma = if (samples > 0) lumaSum.toDouble() / samples else 0.0
+                        Log.i(TAG, "image.toBitmap() created: config=${rawBitmap.config}, size=${bw}x${bh}, avgLuma=${"%.2f".format(avgLuma)} (sampled $samples px)")
 
                         CoroutineScope(Dispatchers.Default).launch {
                             val uprightBitmap = if (rotationDegrees != 0) {
                                 val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-                                Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                                val rotated = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                                if (rotated != rawBitmap) {
+                                    rawBitmap.recycle()
+                                }
+                                rotated
                             } else {
                                 rawBitmap
                             }
