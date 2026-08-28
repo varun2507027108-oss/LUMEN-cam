@@ -37,7 +37,13 @@ class Fbo(
 
         var complete = false
         if (useHalfFloat) {
-            // Allocate 2D RGBA16F half-float texture
+            // GL SPEC RULE: OpenGL ES 3.0 Section 4.3.1:
+            // The GL_RGBA/GL_UNSIGNED_BYTE readback guarantee applies ONLY to normalized fixed-point surfaces (GL_RGBA8).
+            // Reading back from a floating-point surface (GL_RGBA16F) using GL_UNSIGNED_BYTE is not spec-guaranteed
+            // and returns GL_INVALID_OPERATION (error 1282) on Adreno 619 GPUs, yielding an unpopulated black buffer (avgLuma=0.0).
+            // GL_RGBA16F may ONLY be used for intermediate render targets; any FBO targeted by glReadPixels must be GL_RGBA8.
+            //
+            // Allocate 2D RGBA16F half-float texture for intermediate look precision
             GLES30.glTexImage2D(
                 GLES30.GL_TEXTURE_2D,
                 0,

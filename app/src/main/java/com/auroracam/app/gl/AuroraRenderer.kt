@@ -9,8 +9,11 @@ import android.opengl.GLUtils
 import android.opengl.Matrix
 import android.os.SystemClock
 import android.util.Log
+import com.auroracam.app.camera.burst.BurstAligner
+import com.auroracam.app.capture.CaptureSaver
 import com.auroracam.app.gl.lut.AuroraWarmLut
 import com.auroracam.app.gl.lut.ParsedCube
+import com.auroracam.app.gl.passes.BurstMergePass
 import com.auroracam.app.gl.passes.CompositeBlendPass
 import com.auroracam.app.gl.passes.FilmCurvePass
 import com.auroracam.app.gl.passes.LiveBlendPass
@@ -47,6 +50,7 @@ class AuroraRenderer(
     private val liveBlendPass = LiveBlendPass()
     private val compositeBlendPass = CompositeBlendPass()
     private val filmCurvePass = FilmCurvePass()
+    private var burstMergePass: BurstMergePass? = null
 
     // 3D LUT Texture & FBOs
     private val lutTexture = LutTexture()
@@ -72,6 +76,8 @@ class AuroraRenderer(
     @Volatile var lookGrain: Float = 0.04f
     @Volatile var lookVignette: Float = 0.12f
     @Volatile var lookHalation: Float = 0.20f
+    @Volatile private var _isLookPrecision16f: Boolean = true
+    val isLookPrecision16f: Boolean get() = _isLookPrecision16f
 
     @Volatile private var isFirstCapturePending = false
     @Volatile private var pendingLutCube: ParsedCube? = null
@@ -84,6 +90,21 @@ class AuroraRenderer(
     init {
         Matrix.setIdentityM(transformMatrix, 0)
         Matrix.setIdentityM(aspectMatrix, 0)
+    }
+
+    fun setLookPrecision16f(enabled: Boolean) {
+        _isLookPrecision16f = enabled
+        if (viewWidth > 0 && viewHeight > 0) {
+            try {
+                glSurfaceView.queueEvent {
+                    previewSceneFbo?.release()
+                    previewSceneFbo = Fbo(viewWidth, viewHeight, useHalfFloat = _isLookPrecision16f)
+                    Log.i(TAG, "Reallocated previewSceneFbo with 16F precision=$_isLookPrecision16f (actual isHalfFloat=${previewSceneFbo?.isHalfFloat})")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot queueEvent for setLookPrecision16f: ${e.message}")
+            }
+        }
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -106,7 +127,11 @@ class AuroraRenderer(
         pendingLutCube = null
 
         firstExposureFbo?.release()
-        firstExposureFbo = Fbo(PREVIEW_FBO_W, PREVIEW_FBO_H)
+        firstExposureFbo = Fbo(PREVIEW_FBO_W, PREVIEW_FBO_H, useHalfFloat = false)
+
+        previewSceneFbo?.release()
+        previewSceneFbo = Fbo(PREVIEW_FBO_W, PREVIEW_FBO_H, useHalfFloat = isLookPrecision16f)
+        Log.i(TAG, "onSurfaceCreated: initial previewSceneFbo isHalfFloat=${previewSceneFbo?.isHalfFloat}")
 
         val textures = IntArray(1)
         GLES30.glGenTextures(1, textures, 0)
@@ -138,7 +163,8 @@ class AuroraRenderer(
         Log.i(TAG, "onSurfaceChanged: Display Surface size: ${width}x${height} | glViewport set to (0, 0, ${width}, ${height})")
 
         previewSceneFbo?.release()
-        previewSceneFbo = Fbo(width, height)
+        previewSceneFbo = Fbo(width, height, useHalfFloat = isLookPrecision16f)
+        Log.i(TAG, "onSurfaceChanged: previewSceneFbo allocated ${width}x${height}, isHalfFloat=${previewSceneFbo?.isHalfFloat}")
 
         updateAspectMatrix(width, height)
     }
@@ -308,7 +334,76 @@ class AuroraRenderer(
             gradeFbo.release()
 
             GLES30.glDeleteTextures(1, texIds, 0)
+            CaptureSaver.logSizeGuard(gradedBitmap.width, gradedBitmap.height, expectedWidth = w, expectedHeight = h)
             onFinished(gradedBitmap)
+        }
+    }
+
+    fun renderBurstMergeAndGrade(
+        alignmentResult: BurstAligner.AlignmentResult,
+        width: Int,
+        height: Int,
+        onFinished: (Bitmap) -> Unit
+    ) {
+        glSurfaceView.queueEvent {
+            val runtime = Runtime.getRuntime()
+            val heapBefore = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+
+            val mergePass = burstMergePass ?: BurstMergePass().also { burstMergePass = it }
+
+            // Intermediate merge FBO honors look_precision_16f if Look active
+            val mergeFbo = Fbo(width, height, useHalfFloat = (isLookEnabled && lookIntensity > 0.0f && isLookPrecision16f))
+            mergeFbo.bind()
+            GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+
+            mergePass.renderMerge(
+                alignedResult = alignmentResult,
+                width = width,
+                height = height,
+                chromaSoften = true
+            )
+
+            val finalBitmap: Bitmap
+            if (isLookEnabled && lookIntensity > 0.0f) {
+                val gradeFbo = Fbo(width, height, useHalfFloat = false)
+                gradeFbo.bind()
+                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+
+                val timeSeconds = ((SystemClock.elapsedRealtime() % 3600000L) / 1000f)
+                val aspect = width.toFloat() / height.toFloat()
+
+                filmCurvePass.render(
+                    srcTextureId = mergeFbo.textureId,
+                    lutTextureId = lutTexture.textureId,
+                    lutSize = lutTexture.size,
+                    domainMin = lutTexture.domainMin,
+                    domainMax = lutTexture.domainMax,
+                    intensity = lookIntensity,
+                    grain = lookGrain,
+                    vignette = lookVignette,
+                    halation = lookHalation,
+                    timeSeconds = timeSeconds,
+                    aspectRatio = aspect,
+                    width = width,
+                    height = height
+                )
+
+                finalBitmap = readFboToBitmap(gradeFbo, flipY = false)
+                gradeFbo.unbind(viewWidth, viewHeight)
+                gradeFbo.release()
+            } else {
+                finalBitmap = readFboToBitmap(mergeFbo, flipY = false)
+            }
+
+            mergeFbo.unbind(viewWidth, viewHeight)
+            mergeFbo.release()
+
+            CaptureSaver.logSizeGuard(finalBitmap.width, finalBitmap.height, expectedWidth = width, expectedHeight = height)
+
+            val heapAfter = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+            Log.i(TAG, "Heap usage burst merge: before=${heapBefore}MB, after=${heapAfter}MB (freed plane ByteBuffers)")
+
+            onFinished(finalBitmap)
         }
     }
 
@@ -331,8 +426,8 @@ class AuroraRenderer(
 
             val firstBmp = readFboToBitmap(firstExposureFbo ?: return@queueEvent, flipY = true)
 
-            // 1. Blend raw composite (creative pass stays standard RGBA8)
-            val compFbo = Fbo(w, h, useHalfFloat = false)
+            // 1. Blend raw composite (creative pass uses RGBA16F intermediate if Look is active and 16F enabled, else RGBA8)
+            val compFbo = Fbo(w, h, useHalfFloat = (isLookEnabled && lookIntensity > 0.0f && isLookPrecision16f))
             compFbo.bind()
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
             compositeBlendPass.render(
@@ -343,7 +438,7 @@ class AuroraRenderer(
                 flipA = dxFlipFirst
             )
 
-            // 2. Grade composite with Signature Look if enabled (Standard RGBA8)
+            // 2. Grade composite with Signature Look if enabled (Final rendered target MUST be RGBA8 for safe glReadPixels)
             val compositeBmp: Bitmap
             if (isLookEnabled && lookIntensity > 0.0f) {
                 val gradedFbo = Fbo(w, h, useHalfFloat = false)
@@ -389,6 +484,9 @@ class AuroraRenderer(
     }
 
     private fun readFboToBitmap(fbo: Fbo, flipY: Boolean = true): Bitmap {
+        if (fbo.isHalfFloat) {
+            Log.e(TAG, "Assertion failed: glReadPixels attempted on float FBO (${fbo.width}x${fbo.height})! Float readback is not spec-guaranteed (causes GL_INVALID_OPERATION on Adreno 619).")
+        }
         fbo.bind()
         val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
         val errBefore = GLES30.glGetError()

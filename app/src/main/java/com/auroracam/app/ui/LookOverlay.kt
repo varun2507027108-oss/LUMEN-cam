@@ -68,6 +68,12 @@ fun LookOverlay(
     onFormatChanged: (FormatMode) -> Unit,
     isLegacyJpeg: Boolean = false,
     onLegacyJpegToggled: () -> Unit = {},
+    isPreviewBufferHd: Boolean = false,
+    onPreviewBufferHdToggled: () -> Unit = {},
+    isLookPrecision16f: Boolean = true,
+    onLookPrecision16fToggled: () -> Unit = {},
+    isBurstStack: Boolean = false,
+    onBurstStackToggled: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showLutMenu by remember { mutableStateOf(false) }
@@ -88,18 +94,12 @@ fun LookOverlay(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.AutoAwesome,
-                    contentDescription = "Signature Look",
-                    tint = if (isLookEnabled) Color(0xFFFFB74D) else Color.Gray,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Signature Look",
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold
+                    text = "SIGNATURE LOOK",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF00E5FF),
+                    letterSpacing = 1.sp
                 )
             }
 
@@ -107,102 +107,127 @@ fun LookOverlay(
                 checked = isLookEnabled,
                 onCheckedChange = onLookEnabledChanged,
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color(0xFFFFB74D),
-                    checkedTrackColor = Color(0xFF5D4037)
-                )
+                    checkedThumbColor = Color(0xFF00E5FF),
+                    checkedTrackColor = Color(0xFF00E5FF).copy(alpha = 0.4f),
+                    uncheckedThumbColor = Color.Gray,
+                    uncheckedTrackColor = Color(0xFF2A2A2A)
+                ),
+                modifier = Modifier.height(24.dp)
             )
         }
 
-        // Row 2: Preset Chips (Warm, Chrome, Mono, Custom) + Format Chips
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Built-in Presets
-            LutManager.BUILTIN_PRESETS.forEach { preset ->
-                val isSelected = isLookEnabled && activeLutName == preset
-                FilterChip(
-                    selected = isSelected,
-                    onClick = {
-                        if (!isLookEnabled) onLookEnabledChanged(true)
-                        onSelectPreset(preset)
-                    },
-                    label = { Text(preset, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFFFF9800),
-                        selectedLabelColor = Color.Black,
-                        containerColor = Color(0xFF222222),
-                        labelColor = Color(0xFFDDDDDD)
-                    )
-                )
-            }
+        if (isLookEnabled) {
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Custom / Import .cube dropdown chip
-            Box {
-                val isCustomActive = isLookEnabled && !LutManager.BUILTIN_PRESETS.contains(activeLutName)
-                FilterChip(
-                    selected = isCustomActive,
-                    onClick = { showLutMenu = true },
-                    label = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = if (isCustomActive) Icons.Default.Palette else Icons.Default.FileUpload,
-                                contentDescription = "Import",
-                                modifier = Modifier.size(13.dp),
-                                tint = if (isCustomActive) Color.Black else Color(0xFFFFB74D)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
+            // Row 2: Preset Chips (Warm, Chrome, Mono, Custom) + Format Chips
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Built-in Presets
+                LutManager.BUILTIN_PRESETS.forEach { preset ->
+                    val isSelected = isLookEnabled && activeLutName == preset
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            if (!isLookEnabled) onLookEnabledChanged(true)
+                            onSelectPreset(preset)
+                        },
+                        label = { Text(preset, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFF00E5FF),
+                            selectedLabelColor = Color.Black,
+                            containerColor = Color(0xFF222222),
+                            labelColor = Color(0xFFDDDDDD)
+                        )
+                    )
+                }
+
+                // Custom / Import .cube dropdown chip
+                Box {
+                    val isCustomActive = isLookEnabled && !LutManager.BUILTIN_PRESETS.contains(activeLutName)
+                    FilterChip(
+                        selected = isCustomActive,
+                        onClick = { showLutMenu = true },
+                        label = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (isCustomActive) Icons.Default.Palette else Icons.Default.FileUpload,
+                                    contentDescription = "Import",
+                                    modifier = Modifier.size(13.dp),
+                                    tint = if (isCustomActive) Color.Black else Color(0xFFFFB74D)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = if (isCustomActive) activeLutName else ".CUBE",
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFFFFB74D),
+                            selectedLabelColor = Color.Black,
+                            containerColor = Color(0xFF2A2A2A),
+                            labelColor = Color(0xFFFFB74D)
+                        )
+                    )
+
+                    DropdownMenu(
+                        expanded = showLutMenu,
+                        onDismissRequest = { showLutMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("📁 Import .cube file from Storage...") },
+                            onClick = {
+                                onPickLutFile()
+                                showLutMenu = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("⚡ Generate Debug LUTs (mono, invert)") },
+                            onClick = {
+                                onGenerateDebugLuts()
+                                showLutMenu = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (isLegacyJpeg) "🔄 Capture: JPEG (Legacy)" else "🚀 Capture: YUV 420 (Single-Encode)") },
+                            onClick = {
+                                onLegacyJpegToggled()
+                                showLutMenu = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (isPreviewBufferHd) "📺 Preview Buffer: 1920x1440 (HD)" else "📺 Preview Buffer: 1600x1200 (Std)") },
+                            onClick = {
+                                onPreviewBufferHdToggled()
+                                showLutMenu = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (isLookPrecision16f) "✨ Look Precision: 16-bit Float (16F)" else "✨ Look Precision: 8-bit (RGBA8)") },
+                            onClick = {
+                                onLookPrecision16fToggled()
+                                showLutMenu = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (isBurstStack) "⚡ QuickStack Burst: ON (N=6)" else "⚡ QuickStack Burst: OFF (Single-Frame)") },
+                            onClick = {
+                                onBurstStackToggled()
+                                showLutMenu = false
+                            }
+                        )
+                        if (availableLuts.isNotEmpty()) {
                             Text(
-                                text = if (isCustomActive) activeLutName else ".CUBE",
+                                text = "Cached / Test LUTs",
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                                 fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFFFFB74D),
-                        selectedLabelColor = Color.Black,
-                        containerColor = Color(0xFF2A2A2A),
-                        labelColor = Color(0xFFFFB74D)
-                    )
-                )
-
-                DropdownMenu(
-                    expanded = showLutMenu,
-                    onDismissRequest = { showLutMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("📁 Import .cube file from Storage...") },
-                        onClick = {
-                            onPickLutFile()
-                            showLutMenu = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("⚡ Generate Debug LUTs (mono, invert)") },
-                        onClick = {
-                            onGenerateDebugLuts()
-                            showLutMenu = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (isLegacyJpeg) "🔄 Capture: JPEG (Legacy)" else "🚀 Capture: YUV 420 (Single-Encode)") },
-                        onClick = {
-                            onLegacyJpegToggled()
-                            showLutMenu = false
-                        }
-                    )
-                    if (availableLuts.isNotEmpty()) {
-                        Text(
-                            text = "Cached / Test LUTs",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            fontSize = 11.sp,
-                            color = Color.Gray,
                             fontWeight = FontWeight.Bold
                         )
                         availableLuts.forEach { file ->
@@ -237,64 +262,63 @@ fun LookOverlay(
         }
 
         // Row 3: Intensity & Halation Sliders (Visible when Look is enabled)
-        if (isLookEnabled) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Look ${(intensity * 100).toInt()}%",
-                    color = Color(0xFFCCCCCC),
-                    fontSize = 11.sp,
-                    modifier = Modifier.width(68.dp)
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Look ${(intensity * 100).toInt()}%",
+                color = Color(0xFFCCCCCC),
+                fontSize = 11.sp,
+                modifier = Modifier.width(68.dp)
+            )
+            Slider(
+                value = intensity,
+                onValueChange = onIntensityChanged,
+                valueRange = 0.0f..1.0f,
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color(0xFFFFB74D),
+                    activeTrackColor = Color(0xFFFFB74D),
+                    inactiveTrackColor = Color(0xFF444444)
                 )
-                Slider(
-                    value = intensity,
-                    onValueChange = onIntensityChanged,
-                    valueRange = 0.0f..1.0f,
-                    modifier = Modifier.weight(1f),
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFFFFB74D),
-                        activeTrackColor = Color(0xFFFFB74D),
-                        inactiveTrackColor = Color(0xFF444444)
-                    )
-                )
-            }
+            )
+        }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.width(68.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.width(68.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Whatshot,
-                        contentDescription = "Glow",
-                        tint = if (halation > 0.01f) Color(0xFFFF7043) else Color.Gray,
-                        modifier = Modifier.size(13.dp)
-                    )
-                    Spacer(modifier = Modifier.width(2.dp))
-                    Text(
-                        text = "Glow ${(halation * 100).toInt()}%",
-                        color = Color(0xFFCCCCCC),
-                        fontSize = 11.sp
-                    )
-                }
-                Slider(
-                    value = halation,
-                    onValueChange = onHalationChanged,
-                    valueRange = 0.0f..0.60f,
-                    modifier = Modifier.weight(1f),
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFFFF7043),
-                        activeTrackColor = Color(0xFFFF7043),
-                        inactiveTrackColor = Color(0xFF444444)
-                    )
+                Icon(
+                    imageVector = Icons.Default.Whatshot,
+                    contentDescription = "Glow",
+                    tint = if (halation > 0.01f) Color(0xFFFF7043) else Color.Gray,
+                    modifier = Modifier.size(13.dp)
+                )
+                Spacer(modifier = Modifier.width(2.dp))
+                Text(
+                    text = "Glow ${(halation * 100).toInt()}%",
+                    color = Color(0xFFCCCCCC),
+                    fontSize = 11.sp
                 )
             }
+            Slider(
+                value = halation,
+                onValueChange = onHalationChanged,
+                valueRange = 0.0f..0.60f,
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color(0xFFFF7043),
+                    activeTrackColor = Color(0xFFFF7043),
+                    inactiveTrackColor = Color(0xFF444444)
+                )
+            )
         }
     }
+}
 }

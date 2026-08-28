@@ -22,6 +22,85 @@ object CaptureSaver {
     private const val TAG = "CaptureSaver"
     private const val ALBUM_NAME = "AuroraCam"
 
+    data class Telemetry(
+        val iso: Int? = null,
+        val expTimeFormatted: String = "N/A"
+    )
+
+    /**
+     * Builds the standardized provenance tag:
+     * AURORA_<PATH>_<ENC>_<LOOK>_<I###>
+     *
+     * PATH: STD | DX
+     * ENC:  LEG | YUV | STK
+     * LOOK: OFF | WRM | CHR | MON | CUB
+     * I###: 3-digit intensity percentage (e.g. I027, I100), I000 when OFF
+     */
+    fun buildProvenanceTag(
+        path: String,
+        isLegacy: Boolean,
+        lookName: String,
+        isLookEnabled: Boolean,
+        intensity: Float,
+        encOverride: String? = null
+    ): String {
+        val pathTag = path.uppercase(Locale.US)
+        val encTag = encOverride ?: if (isLegacy) "LEG" else "YUV"
+        val lookTag: String
+        val intensityTag: String
+
+        if (!isLookEnabled || intensity <= 0.0f) {
+            lookTag = "OFF"
+            intensityTag = "I000"
+        } else {
+            lookTag = when {
+                lookName.contains("Warm", ignoreCase = true) -> "WRM"
+                lookName.contains("Chrome", ignoreCase = true) -> "CHR"
+                lookName.contains("Mono", ignoreCase = true) -> "MON"
+                else -> "CUB"
+            }
+            val intPct = (intensity * 100f).toInt().coerceIn(0, 100)
+            intensityTag = String.format(Locale.US, "I%03d", intPct)
+        }
+
+        return "AURORA_${pathTag}_${encTag}_${lookTag}_${intensityTag}"
+    }
+
+    /**
+     * Generates a unique timestamped base name with full provenance:
+     * AURORA_<PATH>_<ENC>_<LOOK>_<I###>_<timestamp>
+     */
+    fun generateProvenanceBaseName(
+        path: String,
+        isLegacy: Boolean,
+        lookName: String,
+        isLookEnabled: Boolean,
+        intensity: Float,
+        encOverride: String? = null
+    ): String {
+        val tag = buildProvenanceTag(path, isLegacy, lookName, isLookEnabled, intensity, encOverride)
+        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+        return "${tag}_${timeStamp}"
+    }
+
+    fun generateCaptureFileName(
+        path: String,
+        isLegacy: Boolean,
+        lookName: String,
+        isLookEnabled: Boolean,
+        intensity: Float,
+        suffix: String = "",
+        encOverride: String? = null
+    ): String {
+        val base = generateProvenanceBaseName(path, isLegacy, lookName, isLookEnabled, intensity, encOverride)
+        return "${base}${suffix}.jpg"
+    }
+
+    fun logSizeGuard(width: Int, height: Int, expectedWidth: Int = 3200, expectedHeight: Int = 2400) {
+        val isOk = (width == expectedWidth && height == expectedHeight) || (width == expectedHeight && height == expectedWidth)
+        Log.i(TAG, "CAPTURE size-guard: readback=${width}x${height} expected=${expectedWidth}x${expectedHeight} ${if (isOk) "OK" else "FAIL"}")
+    }
+
     fun generateBaseFileName(): String {
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         return "AURORA_${timeStamp}"
@@ -29,35 +108,42 @@ object CaptureSaver {
 
     suspend fun saveImageProxy(
         context: Context,
-        imageProxy: ImageProxy
+        imageProxy: ImageProxy,
+        fileName: String = "${generateBaseFileName()}.jpg",
+        telemetry: Telemetry? = null
     ): Uri? = withContext(Dispatchers.IO) {
         val buffer = imageProxy.planes[0].buffer
         val bytes = ByteArray(buffer.remaining())
         buffer.get(bytes)
         val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+        val width = imageProxy.width
+        val height = imageProxy.height
 
         imageProxy.close()
-        val fileName = "${generateBaseFileName()}.jpg"
-        saveJpegBytes(context, bytes, fileName, rotationDegrees)
+        saveJpegBytes(context, bytes, fileName, rotationDegrees, width, height, telemetry)
     }
 
     suspend fun saveBitmap(
         context: Context,
         bitmap: Bitmap,
         fileName: String,
-        quality: Int = 97
+        quality: Int = 97,
+        telemetry: Telemetry? = null
     ): Uri? = withContext(Dispatchers.IO) {
         val stream = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
         val bytes = stream.toByteArray()
-        saveJpegBytes(context, bytes, fileName, 0)
+        saveJpegBytes(context, bytes, fileName, 0, bitmap.width, bitmap.height, telemetry)
     }
 
     suspend fun saveJpegBytes(
         context: Context,
         jpegBytes: ByteArray,
         fileName: String,
-        rotationDegrees: Int = 0
+        rotationDegrees: Int = 0,
+        width: Int = 0,
+        height: Int = 0,
+        telemetry: Telemetry? = null
     ): Uri? = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val contentValues = ContentValues().apply {
@@ -84,6 +170,10 @@ object CaptureSaver {
             contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(uri, contentValues, null, null)
 
+            val isoStr = telemetry?.iso?.toString() ?: "N/A"
+            val expStr = telemetry?.expTimeFormatted ?: "N/A"
+            val sizeStr = if (width > 0 && height > 0) "${width}x${height}" else "N/A"
+            Log.i(TAG, "CAPTURE $fileName  ISO=$isoStr ExpTime=$expStr size=$sizeStr bytes=${jpegBytes.size}")
             Log.i(TAG, "Saved image: $uri (path: Pictures/$ALBUM_NAME/$fileName, size: ${jpegBytes.size} bytes / ${"%.1f".format(jpegBytes.size / 1024.0)} KB)")
             uri
         } catch (e: Exception) {

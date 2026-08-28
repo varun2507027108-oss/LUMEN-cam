@@ -34,6 +34,7 @@ fun CameraShutterBar(
     isCapturing: Boolean,
     lastCapturedThumbnail: Bitmap?,
     onShutterClicked: () -> Unit,
+    statusText: String? = null,
     modifier: Modifier = Modifier
 ) {
     Box(
