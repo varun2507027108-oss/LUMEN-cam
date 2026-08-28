@@ -9,7 +9,6 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
-import androidx.camera.core.ImageProxy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -104,23 +103,6 @@ object CaptureSaver {
     fun generateBaseFileName(): String {
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         return "AURORA_${timeStamp}"
-    }
-
-    suspend fun saveImageProxy(
-        context: Context,
-        imageProxy: ImageProxy,
-        fileName: String = "${generateBaseFileName()}.jpg",
-        telemetry: Telemetry? = null
-    ): Uri? = withContext(Dispatchers.IO) {
-        val buffer = imageProxy.planes[0].buffer
-        val bytes = ByteArray(buffer.remaining())
-        buffer.get(bytes)
-        val rotationDegrees = imageProxy.imageInfo.rotationDegrees
-        val width = imageProxy.width
-        val height = imageProxy.height
-
-        imageProxy.close()
-        saveJpegBytes(context, bytes, fileName, rotationDegrees, width, height, telemetry)
     }
 
     suspend fun saveBitmap(

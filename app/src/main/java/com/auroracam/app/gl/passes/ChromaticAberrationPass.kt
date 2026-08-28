@@ -10,6 +10,9 @@ import java.nio.FloatBuffer
  *
  * Simulates vintage camera lens dispersion by shifting the Red and Blue channels
  * radially relative to the optical center.
+ *
+ * Uses a perceptually non-linear quadratic mapping for subpixel precision at low values
+ * and clamps sample coordinates to avoid boundary edge stretching/wrapping artifacts.
  */
 class ChromaticAberrationPass {
 
@@ -48,14 +51,23 @@ class ChromaticAberrationPass {
             dir.x *= uAspectRatio;
             float dist = length(dir);
 
-            // Radial barrel distortion curve: strongest at outer edges
-            vec2 offset = normalize(dir + 0.00001) * (dist * dist) * (uIntensity * 0.022);
+            // Perceptually non-linear strength scaling (value^2 * maxOffset)
+            // Provides fine subtle control below 0.3 and expressive styling at higher values
+            float strength = uIntensity * uIntensity * 0.032;
+
+            // Radial dispersion offset scaled by squared distance from optical center
+            vec2 offset = normalize(dir + 0.00001) * (dist * dist) * strength;
             offset.x /= uAspectRatio;
 
-            float r = texture(uScene, vTexCoord + offset).r;
-            float g = texture(uScene, vTexCoord).g;
-            float b = texture(uScene, vTexCoord - offset).b;
-            float a = texture(uScene, vTexCoord).a;
+            // Strict clamp to valid UV domain prevents texture clamping / border line artifacts
+            vec2 rCoord = clamp(vTexCoord + offset, vec2(0.001), vec2(0.999));
+            vec2 gCoord = vTexCoord;
+            vec2 bCoord = clamp(vTexCoord - offset, vec2(0.001), vec2(0.999));
+
+            float r = texture(uScene, rCoord).r;
+            float g = texture(uScene, gCoord).g;
+            float b = texture(uScene, bCoord).b;
+            float a = texture(uScene, gCoord).a;
 
             fragColor = vec4(r, g, b, a);
         }
@@ -127,7 +139,7 @@ class ChromaticAberrationPass {
 
     fun render(
         sceneTexId: Int,
-        intensity: Float = 0.40f,
+        intensity: Float = 0.35f,
         aspectRatio: Float = 1.0f
     ) {
         if (!isInitialized) init()
@@ -138,8 +150,8 @@ class ChromaticAberrationPass {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sceneTexId)
         GLES30.glUniform1i(uSceneLoc, 0)
 
-        GLES30.glUniform1f(uIntensityLoc, intensity.coerceIn(0.0f, 1.0f))
-        GLES30.glUniform1f(uAspectRatioLoc, if (aspectRatio > 0f) aspectRatio else 1.0f)
+        GLES30.glUniform1f(uIntensityLoc, intensity)
+        GLES30.glUniform1f(uAspectRatioLoc, aspectRatio)
 
         GLES30.glBindVertexArray(vaoId)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -150,13 +162,10 @@ class ChromaticAberrationPass {
     }
 
     fun release() {
-        if (isInitialized) {
-            GLES30.glDeleteProgram(program)
-            val vaos = intArrayOf(vaoId)
-            val vbos = intArrayOf(vboId)
-            GLES30.glDeleteVertexArrays(1, vaos, 0)
-            GLES30.glDeleteBuffers(1, vbos, 0)
-            isInitialized = false
-        }
+        if (!isInitialized) return
+        GLES30.glDeleteProgram(program)
+        GLES30.glDeleteVertexArrays(1, intArrayOf(vaoId), 0)
+        GLES30.glDeleteBuffers(1, intArrayOf(vboId), 0)
+        isInitialized = false
     }
 }

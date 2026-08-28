@@ -10,6 +10,10 @@ import java.nio.FloatBuffer
  *
  * Computes inter-frame temporal difference to isolate moving subjects and
  * blend dynamic motion trails while keeping the static background razor-sharp.
+ *
+ * Uses chromaticity-compensated difference and soft knee thresholding with
+ * noise floor rejection to prevent camera auto-exposure changes from triggering
+ * false motion across the entire frame.
  */
 class MotionExposurePass {
 
@@ -32,9 +36,11 @@ class MotionExposurePass {
 
         uniform sampler2D uTexCurr;
         uniform sampler2D uTexPrev;
-        uniform float uThreshold;  // 0.02 to 0.35
-        uniform float uBlend;      // 0.1 to 1.0
-        uniform int uStyle;        // 0: Classic Ghost, 1: High-Contrast Luminous
+        uniform float uThreshold;   // e.g. 0.08 (0.01 to 0.35)
+        uniform float uSoftness;    // e.g. 0.06 (knee width)
+        uniform float uNoiseFloor;  // e.g. 0.02 (sensor noise deadband)
+        uniform float uBlend;       // 0.1 to 1.0
+        uniform int uStyle;         // 0: Classic Ghost, 1: High-Contrast Luminous
 
         in vec2 vTexCoord;
         out vec4 fragColor;
@@ -43,21 +49,34 @@ class MotionExposurePass {
             vec4 curr = texture(uTexCurr, vTexCoord);
             vec4 prev = texture(uTexPrev, vTexCoord);
 
-            // Compute perceptual difference
-            vec3 diffVec = abs(curr.rgb - prev.rgb);
-            float diff = dot(diffVec, vec3(0.299, 0.587, 0.114));
+            // 1. Compute perceptual luminance
+            float currLuma = dot(curr.rgb, vec3(0.299, 0.587, 0.114));
+            float prevLuma = dot(prev.rgb, vec3(0.299, 0.587, 0.114));
+            float rawLumaDiff = abs(currLuma - prevLuma);
 
-            // Smooth threshold masking to avoid hard noise stepping
-            float mask = smoothstep(uThreshold * 0.7, uThreshold * 1.4, diff);
+            // 2. Chromaticity difference: invariant to global exposure/brightness changes
+            vec3 currChrom = curr.rgb / max(currLuma + 0.02, 0.05);
+            vec3 prevChrom = prev.rgb / max(prevLuma + 0.02, 0.05);
+            float chromDiff = length(currChrom - prevChrom);
+
+            // Combined robust motion metric
+            float motionMetric = max(rawLumaDiff, chromDiff * 0.35);
+
+            // 3. Noise Floor Deadband: reject subtle sensor grain fluctuations
+            motionMetric = max(0.0, motionMetric - uNoiseFloor);
+
+            // 4. Soft Threshold Masking with organic knee transition
+            float knee = max(0.01, uSoftness);
+            float mask = smoothstep(uThreshold, uThreshold + knee, motionMetric);
 
             vec3 motionColor;
             if (uStyle == 1) {
                 // High-contrast luminous trail
-                vec3 glow = prev.rgb * 1.2;
-                motionColor = 1.0 - (1.0 - curr.rgb) * (1.0 - glow);
+                vec3 glow = prev.rgb * 1.35;
+                motionColor = 1.0 - (1.0 - curr.rgb) * (1.0 - clamp(glow, 0.0, 1.0));
             } else {
-                // Classic exposure ghost
-                motionColor = mix(prev.rgb, curr.rgb, 0.45);
+                // Classic multi-exposure ghost
+                motionColor = mix(prev.rgb, curr.rgb, 0.40);
             }
 
             // Keep stationary background identical to curr, mix motion where detected
@@ -71,6 +90,8 @@ class MotionExposurePass {
     private var uTexCurrLoc = 0
     private var uTexPrevLoc = 0
     private var uThresholdLoc = 0
+    private var uSoftnessLoc = 0
+    private var uNoiseFloorLoc = 0
     private var uBlendLoc = 0
     private var uStyleLoc = 0
 
@@ -86,6 +107,8 @@ class MotionExposurePass {
         uTexCurrLoc = GLES30.glGetUniformLocation(program, "uTexCurr")
         uTexPrevLoc = GLES30.glGetUniformLocation(program, "uTexPrev")
         uThresholdLoc = GLES30.glGetUniformLocation(program, "uThreshold")
+        uSoftnessLoc = GLES30.glGetUniformLocation(program, "uSoftness")
+        uNoiseFloorLoc = GLES30.glGetUniformLocation(program, "uNoiseFloor")
         uBlendLoc = GLES30.glGetUniformLocation(program, "uBlend")
         uStyleLoc = GLES30.glGetUniformLocation(program, "uStyle")
 
@@ -139,6 +162,8 @@ class MotionExposurePass {
         currTexId: Int,
         prevTexId: Int,
         threshold: Float = 0.08f,
+        softness: Float = 0.06f,
+        noiseFloor: Float = 0.02f,
         blend: Float = 0.85f,
         style: Int = 0
     ) {
@@ -154,8 +179,10 @@ class MotionExposurePass {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, prevTexId)
         GLES30.glUniform1i(uTexPrevLoc, 1)
 
-        GLES30.glUniform1f(uThresholdLoc, threshold.coerceIn(0.01f, 0.40f))
-        GLES30.glUniform1f(uBlendLoc, blend.coerceIn(0.0f, 1.0f))
+        GLES30.glUniform1f(uThresholdLoc, threshold)
+        GLES30.glUniform1f(uSoftnessLoc, softness)
+        GLES30.glUniform1f(uNoiseFloorLoc, noiseFloor)
+        GLES30.glUniform1f(uBlendLoc, blend)
         GLES30.glUniform1i(uStyleLoc, style)
 
         GLES30.glBindVertexArray(vaoId)
@@ -167,13 +194,10 @@ class MotionExposurePass {
     }
 
     fun release() {
-        if (isInitialized) {
-            GLES30.glDeleteProgram(program)
-            val vaos = intArrayOf(vaoId)
-            val vbos = intArrayOf(vboId)
-            GLES30.glDeleteVertexArrays(1, vaos, 0)
-            GLES30.glDeleteBuffers(1, vbos, 0)
-            isInitialized = false
-        }
+        if (!isInitialized) return
+        GLES30.glDeleteProgram(program)
+        GLES30.glDeleteVertexArrays(1, intArrayOf(vaoId), 0)
+        GLES30.glDeleteBuffers(1, intArrayOf(vboId), 0)
+        isInitialized = false
     }
 }

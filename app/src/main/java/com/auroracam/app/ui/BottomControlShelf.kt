@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -54,7 +53,6 @@ import androidx.compose.ui.unit.sp
 import com.auroracam.app.capture.LutManager
 import com.auroracam.app.ui.theme.AuroraAmber
 import com.auroracam.app.ui.theme.AuroraCyan
-import com.auroracam.app.ui.theme.DarkSurface
 import com.auroracam.app.ui.theme.TextSecondary
 import com.auroracam.app.ui.theme.White
 import java.io.File
@@ -91,6 +89,8 @@ fun BottomControlShelf(
     onMotionThresholdChanged: (Float) -> Unit = {},
     lightTrailDecay: Float = 0.94f,
     onLightTrailDecayChanged: (Float) -> Unit = {},
+    lightTrailBlendMode: Int = 0,
+    onLightTrailBlendModeChanged: (Int) -> Unit = {},
     chromaticAberration: Float = 0.0f,
     onChromaticAberrationChanged: (Float) -> Unit = {},
     onClearLightTrails: () -> Unit = {},
@@ -110,6 +110,8 @@ fun BottomControlShelf(
     onLookPrecision16fToggled: () -> Unit,
     isPreviewBufferHd: Boolean,
     onPreviewBufferHdToggled: () -> Unit,
+    showGpuOverlay: Boolean = false,
+    onShowGpuOverlayToggled: () -> Unit = {},
     // Double Exposure
     dxStage: DxStage = DxStage.STAGE_1_EMPTY,
     dxBlendMode: BlendMode = BlendMode.SCREEN,
@@ -405,7 +407,7 @@ fun BottomControlShelf(
                         onClick = onBurstStackToggled,
                         label = {
                             Text(
-                                if (isBurstStack) "⚡ Burst Stack N=6" else "Single Capture",
+                                if (isBurstStack) "⚡ Burst N=6" else "Single Shot",
                                 fontSize = 10.sp
                             )
                         },
@@ -424,7 +426,7 @@ fun BottomControlShelf(
                         onClick = onLookPrecision16fToggled,
                         label = {
                             Text(
-                                if (isLookPrecision16f) "16-Bit Float FBO" else "8-Bit RGBA",
+                                if (isLookPrecision16f) "16-Bit Float" else "8-Bit RGBA",
                                 fontSize = 10.sp
                             )
                         },
@@ -437,8 +439,47 @@ fun BottomControlShelf(
                         modifier = Modifier.height(28.dp)
                     )
 
-                    // Clear Light Trails Reset Action
+                    // Developer GPU Profiling Overlay Toggle
+                    FilterChip(
+                        selected = showGpuOverlay,
+                        onClick = onShowGpuOverlayToggled,
+                        label = {
+                            Text(
+                                if (showGpuOverlay) "📊 GPU HUD ON" else "📊 GPU HUD",
+                                fontSize = 10.sp
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFF00E676),
+                            selectedLabelColor = Color.Black,
+                            containerColor = Color(0xFF1E1E1E),
+                            labelColor = White
+                        ),
+                        modifier = Modifier.height(28.dp)
+                    )
+
+                    // Light Trail Accumulation Modes & Reset
                     if (cameraMode == CameraMode.LIGHT_TRAILS) {
+                        listOf(
+                            0 to "MAX",
+                            1 to "ADD",
+                            2 to "SCREEN"
+                        ).forEach { (modeId, label) ->
+                            val isSelected = lightTrailBlendMode == modeId
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { onLightTrailBlendModeChanged(modeId) },
+                                label = { Text("Trail $label", fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AuroraAmber,
+                                    selectedLabelColor = Color.Black,
+                                    containerColor = Color(0xFF1E1E1E),
+                                    labelColor = White
+                                ),
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+
                         FilterChip(
                             selected = false,
                             onClick = onClearLightTrails,

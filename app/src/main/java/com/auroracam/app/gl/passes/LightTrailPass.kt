@@ -10,10 +10,15 @@ import java.nio.FloatBuffer
  *
  * Accumulates bright moving lights (car headlights, light painting, city bokeh)
  * across frames into streaks and luminous light trails.
+ *
+ * Supports soft-knee thresholding and selectable accumulation blend modes:
+ * - 0: MAX (non-destructive maximum intensity hold)
+ * - 1: ADD (additive accumulation with energy build-up)
+ * - 2: SCREEN (soft photographic highlight roll-off)
  */
 class LightTrailPass {
 
-    // Pass A: Accumulate bright pixels with temporal decay
+    // Pass A: Accumulate bright pixels with temporal decay and selectable blend
     private val accumVertexCode = """
         #version 300 es
         layout(location = 0) in vec2 aPosition;
@@ -34,8 +39,10 @@ class LightTrailPass {
         uniform sampler2D uTexCurr;
         uniform sampler2D uTexAccum;
         uniform float uThreshold;       // e.g. 0.55
+        uniform float uKnee;            // e.g. 0.10 (softness knee)
         uniform float uDecay;           // e.g. 0.94
         uniform float uTrailIntensity;  // e.g. 1.25
+        uniform int uBlendMode;         // 0: MAX, 1: ADD, 2: SCREEN
 
         in vec2 vTexCoord;
         out vec4 fragColor;
@@ -47,13 +54,24 @@ class LightTrailPass {
             // Compute relative luminance
             float luma = dot(curr.rgb, vec3(0.2126, 0.7152, 0.0722));
 
-            // Smooth threshold isolation for luminous elements
-            float brightFactor = smoothstep(uThreshold, min(1.0, uThreshold + 0.18), luma);
+            // Soft-knee threshold isolation for luminous elements
+            float knee = max(0.02, uKnee);
+            float brightFactor = smoothstep(uThreshold - knee, uThreshold + knee, luma);
             vec3 brightColor = curr.rgb * (brightFactor * uTrailIntensity);
 
-            // Decay previous accumulation and take max/additive for pristine light streaks
-            vec3 decayedAccum = prevAccum.rgb * uDecay;
-            vec3 newAccum = max(decayedAccum, brightColor);
+            vec3 faded = prevAccum.rgb * uDecay;
+            vec3 newAccum;
+
+            if (uBlendMode == 1) {
+                // 1. Additive accumulation with saturation clamping
+                newAccum = min(vec3(1.0), faded + brightColor);
+            } else if (uBlendMode == 2) {
+                // 2. Screen accumulation (soft photographic highlight rolloff)
+                newAccum = vec3(1.0) - (vec3(1.0) - faded) * (vec3(1.0) - clamp(brightColor, 0.0, 1.0));
+            } else {
+                // 0. Max accumulation (default clean light painting)
+                newAccum = max(faded, brightColor);
+            }
 
             fragColor = vec4(clamp(newAccum, 0.0, 1.0), 1.0);
         }
@@ -85,8 +103,10 @@ class LightTrailPass {
     private var uTexCurrAccumLoc = 0
     private var uTexAccumLoc = 0
     private var uThresholdLoc = 0
+    private var uKneeLoc = 0
     private var uDecayLoc = 0
     private var uTrailIntensityLoc = 0
+    private var uBlendModeLoc = 0
 
     private var combineProgram = 0
     private var uTexCurrCombineLoc = 0
@@ -104,8 +124,10 @@ class LightTrailPass {
         uTexCurrAccumLoc = GLES30.glGetUniformLocation(accumProgram, "uTexCurr")
         uTexAccumLoc = GLES30.glGetUniformLocation(accumProgram, "uTexAccum")
         uThresholdLoc = GLES30.glGetUniformLocation(accumProgram, "uThreshold")
+        uKneeLoc = GLES30.glGetUniformLocation(accumProgram, "uKnee")
         uDecayLoc = GLES30.glGetUniformLocation(accumProgram, "uDecay")
         uTrailIntensityLoc = GLES30.glGetUniformLocation(accumProgram, "uTrailIntensity")
+        uBlendModeLoc = GLES30.glGetUniformLocation(accumProgram, "uBlendMode")
 
         combineProgram = ShaderCompiler.createProgram(accumVertexCode, combineFragmentCode)
         uTexCurrCombineLoc = GLES30.glGetUniformLocation(combineProgram, "uTexCurr")
@@ -158,15 +180,14 @@ class LightTrailPass {
         isInitialized = true
     }
 
-    /**
-     * Step 1: Render new accumulated light into accumulation FBO.
-     */
     fun renderAccumulation(
         currTexId: Int,
         prevAccumTexId: Int,
         threshold: Float = 0.55f,
+        knee: Float = 0.10f,
         decay: Float = 0.94f,
-        intensity: Float = 1.25f
+        intensity: Float = 1.25f,
+        blendMode: Int = 0 // 0: MAX, 1: ADD, 2: SCREEN
     ) {
         if (!isInitialized) init()
 
@@ -180,9 +201,11 @@ class LightTrailPass {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, prevAccumTexId)
         GLES30.glUniform1i(uTexAccumLoc, 1)
 
-        GLES30.glUniform1f(uThresholdLoc, threshold.coerceIn(0.1f, 0.95f))
-        GLES30.glUniform1f(uDecayLoc, decay.coerceIn(0.50f, 0.99f))
-        GLES30.glUniform1f(uTrailIntensityLoc, intensity.coerceIn(0.5f, 2.5f))
+        GLES30.glUniform1f(uThresholdLoc, threshold)
+        GLES30.glUniform1f(uKneeLoc, knee)
+        GLES30.glUniform1f(uDecayLoc, decay)
+        GLES30.glUniform1f(uTrailIntensityLoc, intensity)
+        GLES30.glUniform1i(uBlendModeLoc, blendMode)
 
         GLES30.glBindVertexArray(vaoId)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -192,9 +215,6 @@ class LightTrailPass {
         GLES30.glUseProgram(0)
     }
 
-    /**
-     * Step 2: Combine live frame with accumulated light streaks into target scene FBO.
-     */
     fun renderCombine(
         currTexId: Int,
         accumTexId: Int,
@@ -212,7 +232,7 @@ class LightTrailPass {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, accumTexId)
         GLES30.glUniform1i(uTexAccumCombineLoc, 1)
 
-        GLES30.glUniform1f(uMixLoc, mix.coerceIn(0.0f, 1.5f))
+        GLES30.glUniform1f(uMixLoc, mix)
 
         GLES30.glBindVertexArray(vaoId)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -223,14 +243,11 @@ class LightTrailPass {
     }
 
     fun release() {
-        if (isInitialized) {
-            GLES30.glDeleteProgram(accumProgram)
-            GLES30.glDeleteProgram(combineProgram)
-            val vaos = intArrayOf(vaoId)
-            val vbos = intArrayOf(vboId)
-            GLES30.glDeleteVertexArrays(1, vaos, 0)
-            GLES30.glDeleteBuffers(1, vbos, 0)
-            isInitialized = false
-        }
+        if (!isInitialized) return
+        GLES30.glDeleteProgram(accumProgram)
+        GLES30.glDeleteProgram(combineProgram)
+        GLES30.glDeleteVertexArrays(1, intArrayOf(vaoId), 0)
+        GLES30.glDeleteBuffers(1, intArrayOf(vboId), 0)
+        isInitialized = false
     }
 }

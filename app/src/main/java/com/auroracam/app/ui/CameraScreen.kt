@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.opengl.GLSurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -25,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,6 +39,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,6 +50,7 @@ import com.auroracam.app.capture.CaptureSaver
 import com.auroracam.app.capture.DxMetadata
 import com.auroracam.app.capture.LutManager
 import com.auroracam.app.gl.AuroraRenderer
+import com.auroracam.app.gl.GpuTelemetry
 import com.auroracam.app.gl.lut.DebugLutGenerator
 import com.auroracam.app.ui.theme.AuroraCyan
 import com.auroracam.app.ui.theme.DarkBackground
@@ -86,6 +91,7 @@ fun CameraScreen() {
     var temporalEchoDecay by remember { mutableFloatStateOf(0.75f) }
     var motionThreshold by remember { mutableFloatStateOf(0.08f) }
     var lightTrailDecay by remember { mutableFloatStateOf(0.94f) }
+    var lightTrailBlendMode by remember { mutableIntStateOf(0) }
     var chromaticAberration by remember { mutableFloatStateOf(0.0f) }
     var currentWheelParam by remember { mutableStateOf(WheelParameter.LOOK_INTENSITY) }
 
@@ -99,6 +105,8 @@ fun CameraScreen() {
     var isPreviewBufferHd by remember { mutableStateOf(cameraController.isPreviewBufferHd()) }
     var isLookPrecision16f by remember { mutableStateOf(cameraController.isLookPrecision16f()) }
     var isBurstStack by remember { mutableStateOf(cameraController.isBurstStack()) }
+    var showGpuOverlay by remember { mutableStateOf(false) }
+    var gpuTelemetry by remember { mutableStateOf(GpuTelemetry()) }
 
     var rendererRef by remember { mutableStateOf<AuroraRenderer?>(null) }
 
@@ -175,7 +183,9 @@ fun CameraScreen() {
                         renderer.temporalEchoDecay = temporalEchoDecay
                         renderer.motionThreshold = motionThreshold
                         renderer.lightTrailDecay = lightTrailDecay
+                        renderer.lightTrailBlendMode = lightTrailBlendMode
                         renderer.chromaticAberrationIntensity = chromaticAberration
+                        renderer.onGpuTelemetryUpdated = { stats -> gpuTelemetry = stats }
                         rendererRef = renderer
                         setRenderer(renderer)
                         renderer.setLookPrecision16f(isLookPrecision16f)
@@ -219,7 +229,17 @@ fun CameraScreen() {
             }
         )
 
-        // 5. Bottom Controls Stack: Mode Selector -> Shutter Bar -> Options Shelf Below Shutter
+        // 5. Developer GPU Profiling Overlay HUD
+        if (showGpuOverlay) {
+            GpuTelemetryOverlay(
+                telemetry = gpuTelemetry,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 48.dp, start = 12.dp)
+            )
+        }
+
+        // 6. Bottom Controls Stack: Mode Selector -> Shutter Bar -> Options Shelf Below Shutter
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -278,11 +298,13 @@ fun CameraScreen() {
                 },
                 statusText = captureStatus,
                 onShutterClicked = {
+                    if (isCapturing) return@CameraShutterBar
+
                     when (cameraMode) {
                         CameraMode.STANDARD -> {
                             isCapturing = true
                             if (isBurstStack) {
-                                captureStatus = "Stacking..."
+                                captureStatus = "Stacking N=6..."
                                 cameraController.takeBurst(6) { frames, status ->
                                     if (frames == null || frames.isEmpty()) {
                                         android.util.Log.e("CameraScreen", "Burst capture failed or empty: $status")
@@ -295,6 +317,7 @@ fun CameraScreen() {
                                         val frameW = frames[0].width
                                         val frameH = frames[0].height
                                         withContext(Dispatchers.Main) {
+                                            captureStatus = "Merging & Grading..."
                                             rendererRef?.renderBurstMergeAndGrade(aligned, frameW, frameH) { mergedBitmap ->
                                                 coroutineScope.launch(Dispatchers.IO) {
                                                     val cropped = currentFormat.cropBitmap(mergedBitmap)
@@ -329,16 +352,134 @@ fun CameraScreen() {
                                     }
                                 }
                             } else {
-                                cameraController.takePictureBitmap { rawBitmap ->
-                                    if (rawBitmap == null) {
+                                captureStatus = "Capturing..."
+                                cameraController.takePictureBitmap { rawBmp ->
+                                    if (rawBmp != null) {
+                                        captureStatus = "Grading..."
+                                        rendererRef?.renderGradedStill(rawBmp) { gradedBmp ->
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                val cropped = currentFormat.cropBitmap(gradedBmp)
+                                                val fileName = CaptureSaver.generateCaptureFileName(
+                                                    path = "STD",
+                                                    isLegacy = isLegacyJpeg,
+                                                    lookName = activeLutName,
+                                                    isLookEnabled = isLookEnabled,
+                                                    intensity = lookIntensity
+                                                )
+                                                val uri = CaptureSaver.saveBitmap(
+                                                    context = context,
+                                                    bitmap = cropped,
+                                                    fileName = fileName,
+                                                    quality = 97,
+                                                    telemetry = cameraController.lastTelemetry
+                                                )
+                                                if (cropped != gradedBmp) {
+                                                    cropped.recycle()
+                                                }
+                                                gradedBmp.recycle()
+                                                val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
+                                                withContext(Dispatchers.Main) {
+                                                    lastCapturedThumbnail = thumb
+                                                    isCapturing = false
+                                                    captureStatus = null
+                                                }
+                                            }
+                                        }
+                                    } else {
                                         isCapturing = false
-                                        return@takePictureBitmap
+                                        captureStatus = null
                                     }
-                                    rendererRef?.renderGradedStill(rawBitmap) { gradedBitmap ->
+                                }
+                            }
+                        }
+                        CameraMode.DOUBLE_EXPOSURE -> {
+                            when (dxStage) {
+                                DxStage.STAGE_1_EMPTY -> {
+                                    cameraController.setAeAwbLock(true)
+                                    rendererRef?.captureFirstExposure()
+                                }
+                                DxStage.STAGE_2_LOCKED -> {
+                                    isCapturing = true
+                                    captureStatus = "Blending Frame 2..."
+                                    cameraController.takePictureBitmap { secondBitmap ->
+                                        if (secondBitmap == null) {
+                                            isCapturing = false
+                                            captureStatus = null
+                                            return@takePictureBitmap
+                                        }
+                                        rendererRef?.renderCompositeStill(secondBitmap) { firstBmp, secondBmp, compositeBmp ->
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                val baseName = CaptureSaver.generateProvenanceBaseName(
+                                                    path = "DX",
+                                                    isLegacy = isLegacyJpeg,
+                                                    lookName = activeLutName,
+                                                    isLookEnabled = isLookEnabled,
+                                                    intensity = lookIntensity
+                                                )
+                                                val firstFile = "${baseName}_first.jpg"
+                                                val secondFile = "${baseName}_second.jpg"
+                                                val compFile = "${baseName}.jpg"
+
+                                                val croppedFirst = currentFormat.cropBitmap(firstBmp)
+                                                val croppedSecond = currentFormat.cropBitmap(secondBmp)
+                                                val croppedComp = currentFormat.cropBitmap(compositeBmp)
+
+                                                val telemetry = cameraController.lastTelemetry
+                                                CaptureSaver.saveBitmap(context, croppedFirst, firstFile, quality = 97, telemetry = telemetry)
+                                                CaptureSaver.saveBitmap(context, croppedSecond, secondFile, quality = 97, telemetry = telemetry)
+                                                val compUri = CaptureSaver.saveBitmap(context, croppedComp, compFile, quality = 97, telemetry = telemetry)
+
+                                                if (croppedFirst != firstBmp) croppedFirst.recycle()
+                                                if (croppedSecond != secondBmp) croppedSecond.recycle()
+                                                if (croppedComp != compositeBmp) croppedComp.recycle()
+                                                firstBmp.recycle()
+                                                secondBmp.recycle()
+                                                compositeBmp.recycle()
+
+                                                DxMetadata.save(
+                                                    context,
+                                                    DxMetadata(
+                                                        firstFileName = firstFile,
+                                                        secondFileName = secondFile,
+                                                        compositeFileName = compFile,
+                                                        blendMode = blendMode.modeId,
+                                                        opacity = opacity,
+                                                        flipFirst = isFlipped
+                                                    )
+                                                )
+
+                                                cameraController.setAeAwbLock(false)
+                                                evBias = 0.0f
+                                                cameraController.setExposureCompensation(0f)
+
+                                                val thumb = compUri?.let { CaptureSaver.loadThumbnail(context, it) }
+                                                withContext(Dispatchers.Main) {
+                                                    lastCapturedThumbnail = thumb
+                                                    isCapturing = false
+                                                    captureStatus = null
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        CameraMode.TEMPORAL_ECHO, CameraMode.MOTION_EXPOSURE, CameraMode.LIGHT_TRAILS -> {
+                            isCapturing = true
+                            captureStatus = "Capturing high-res frame..."
+                            cameraController.takePictureBitmap { highResBmp ->
+                                if (highResBmp != null && rendererRef != null) {
+                                    rendererRef?.renderTemporalCreativeStill(highResBmp, cameraMode) { finalBmp ->
                                         coroutineScope.launch(Dispatchers.IO) {
-                                            val cropped = currentFormat.cropBitmap(gradedBitmap)
+                                            val cropped = currentFormat.cropBitmap(finalBmp)
+                                            val prefix = when (cameraMode) {
+                                                CameraMode.TEMPORAL_ECHO -> "ECHO"
+                                                CameraMode.MOTION_EXPOSURE -> "MOT"
+                                                CameraMode.LIGHT_TRAILS -> "TRAIL"
+                                                else -> "FX"
+                                            }
                                             val fileName = CaptureSaver.generateCaptureFileName(
-                                                path = "STD",
+                                                path = prefix,
                                                 isLegacy = isLegacyJpeg,
                                                 lookName = activeLutName,
                                                 isLookEnabled = isLookEnabled,
@@ -351,120 +492,54 @@ fun CameraScreen() {
                                                 quality = 97,
                                                 telemetry = cameraController.lastTelemetry
                                             )
-                                            if (cropped != gradedBitmap) {
+                                            if (cropped != finalBmp) {
                                                 cropped.recycle()
                                             }
-                                            gradedBitmap.recycle()
+                                            finalBmp.recycle()
                                             val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
                                             withContext(Dispatchers.Main) {
                                                 lastCapturedThumbnail = thumb
                                                 isCapturing = false
+                                                captureStatus = null
                                             }
                                         }
                                     }
-                                }
-                            }
-                        }
-                        CameraMode.DOUBLE_EXPOSURE -> {
-                            if (dxStage == DxStage.STAGE_1_EMPTY) {
-                                rendererRef?.captureFirstExposure()
-                            } else {
-                                isCapturing = true
-                                cameraController.takePictureBitmap { secondBitmap ->
-                                    if (secondBitmap == null) {
-                                        isCapturing = false
-                                        return@takePictureBitmap
-                                    }
-                                    rendererRef?.renderCompositeStill(secondBitmap) { firstBmp, secondBmp, compositeBmp ->
+                                } else {
+                                    // Fallback to preview FBO capture if takePictureBitmap unavailable
+                                    rendererRef?.captureLiveSceneStill { liveBmp ->
                                         coroutineScope.launch(Dispatchers.IO) {
-                                            val baseName = CaptureSaver.generateProvenanceBaseName(
-                                                path = "DX",
+                                            val cropped = currentFormat.cropBitmap(liveBmp)
+                                            val prefix = when (cameraMode) {
+                                                CameraMode.TEMPORAL_ECHO -> "ECHO"
+                                                CameraMode.MOTION_EXPOSURE -> "MOT"
+                                                CameraMode.LIGHT_TRAILS -> "TRAIL"
+                                                else -> "FX"
+                                            }
+                                            val fileName = CaptureSaver.generateCaptureFileName(
+                                                path = prefix,
                                                 isLegacy = isLegacyJpeg,
                                                 lookName = activeLutName,
                                                 isLookEnabled = isLookEnabled,
                                                 intensity = lookIntensity
                                             )
-                                            val firstFile = "${baseName}_first.jpg"
-                                            val secondFile = "${baseName}_second.jpg"
-                                            val compFile = "${baseName}.jpg"
-
-                                            val croppedFirst = currentFormat.cropBitmap(firstBmp)
-                                            val croppedSecond = currentFormat.cropBitmap(secondBmp)
-                                            val croppedComp = currentFormat.cropBitmap(compositeBmp)
-
-                                            val telemetry = cameraController.lastTelemetry
-                                            CaptureSaver.saveBitmap(context, croppedFirst, firstFile, quality = 97, telemetry = telemetry)
-                                            CaptureSaver.saveBitmap(context, croppedSecond, secondFile, quality = 97, telemetry = telemetry)
-                                            val compUri = CaptureSaver.saveBitmap(context, croppedComp, compFile, quality = 97, telemetry = telemetry)
-
-                                            if (croppedFirst != firstBmp) croppedFirst.recycle()
-                                            if (croppedSecond != secondBmp) croppedSecond.recycle()
-                                            if (croppedComp != compositeBmp) croppedComp.recycle()
-                                            firstBmp.recycle()
-                                            secondBmp.recycle()
-                                            compositeBmp.recycle()
-
-                                            DxMetadata.save(
-                                                context,
-                                                DxMetadata(
-                                                    firstFileName = firstFile,
-                                                    secondFileName = secondFile,
-                                                    compositeFileName = compFile,
-                                                    blendMode = blendMode.modeId,
-                                                    opacity = opacity,
-                                                    flipFirst = isFlipped
-                                                )
+                                            val uri = CaptureSaver.saveBitmap(
+                                                context = context,
+                                                bitmap = cropped,
+                                                fileName = fileName,
+                                                quality = 97,
+                                                telemetry = cameraController.lastTelemetry
                                             )
-
-                                            cameraController.setAeAwbLock(false)
-                                            evBias = 0.0f
-                                            cameraController.setExposureCompensation(0f)
-
-                                            val thumb = compUri?.let { CaptureSaver.loadThumbnail(context, it) }
+                                            if (cropped != liveBmp) {
+                                                cropped.recycle()
+                                            }
+                                            liveBmp.recycle()
+                                            val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
                                             withContext(Dispatchers.Main) {
                                                 lastCapturedThumbnail = thumb
                                                 isCapturing = false
+                                                captureStatus = null
                                             }
                                         }
-                                    }
-                                }
-                            }
-                        }
-                        CameraMode.TEMPORAL_ECHO, CameraMode.MOTION_EXPOSURE, CameraMode.LIGHT_TRAILS -> {
-                            isCapturing = true
-                            captureStatus = "Capturing..."
-                            rendererRef?.captureLiveSceneStill { liveBmp ->
-                                coroutineScope.launch(Dispatchers.IO) {
-                                    val cropped = currentFormat.cropBitmap(liveBmp)
-                                    val prefix = when (cameraMode) {
-                                        CameraMode.TEMPORAL_ECHO -> "ECHO"
-                                        CameraMode.MOTION_EXPOSURE -> "MOT"
-                                        CameraMode.LIGHT_TRAILS -> "TRAIL"
-                                        else -> "FX"
-                                    }
-                                    val fileName = CaptureSaver.generateCaptureFileName(
-                                        path = prefix,
-                                        isLegacy = isLegacyJpeg,
-                                        lookName = activeLutName,
-                                        isLookEnabled = isLookEnabled,
-                                        intensity = lookIntensity
-                                    )
-                                    val uri = CaptureSaver.saveBitmap(
-                                        context = context,
-                                        bitmap = cropped,
-                                        fileName = fileName,
-                                        quality = 97,
-                                        telemetry = cameraController.lastTelemetry
-                                    )
-                                    if (cropped != liveBmp) {
-                                        cropped.recycle()
-                                    }
-                                    liveBmp.recycle()
-                                    val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
-                                    withContext(Dispatchers.Main) {
-                                        lastCapturedThumbnail = thumb
-                                        isCapturing = false
-                                        captureStatus = null
                                     }
                                 }
                             }
@@ -475,7 +550,7 @@ fun CameraScreen() {
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // 6. Options Shelf BELOW the Shutter Button
+            // 7. Options Shelf BELOW the Shutter Button
             BottomControlShelf(
                 cameraMode = cameraMode,
                 isLookEnabled = isLookEnabled,
@@ -534,6 +609,11 @@ fun CameraScreen() {
                     lightTrailDecay = decay
                     rendererRef?.lightTrailDecay = decay
                 },
+                lightTrailBlendMode = lightTrailBlendMode,
+                onLightTrailBlendModeChanged = { mode ->
+                    lightTrailBlendMode = mode
+                    rendererRef?.lightTrailBlendMode = mode
+                },
                 chromaticAberration = chromaticAberration,
                 onChromaticAberrationChanged = { ca ->
                     chromaticAberration = ca
@@ -578,6 +658,10 @@ fun CameraScreen() {
                     isPreviewBufferHd = next
                     cameraController.setPreviewBufferHd(next)
                 },
+                showGpuOverlay = showGpuOverlay,
+                onShowGpuOverlayToggled = {
+                    showGpuOverlay = !showGpuOverlay
+                },
                 dxStage = dxStage,
                 dxBlendMode = blendMode,
                 onBlendModeSelected = { mode ->
@@ -605,3 +689,53 @@ fun CameraScreen() {
     }
 }
 
+/**
+ * Developer GPU Profiling HUD Overlay.
+ */
+@Composable
+fun GpuTelemetryOverlay(
+    telemetry: GpuTelemetry,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color(0xCC0A0A0A),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, Color(0x3300E5FF)),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            Text(
+                text = "⚡ GPU PROFILER",
+                color = AuroraCyan,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "FPS: ${"%.1f".format(telemetry.fps)} (${"%.1f".format(telemetry.frameTimeMs)}ms)",
+                color = if (telemetry.fps >= 55f) Color(0xFF69F0AE) else Color(0xFFFFD54F),
+                fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            Text(
+                text = "GPU FX: ${"%.1f".format(telemetry.gpuEffectsTimeMs)}ms",
+                color = Color.White.copy(alpha = 0.85f),
+                fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            Text(
+                text = "RES: ${telemetry.previewWidth}x${telemetry.previewHeight}",
+                color = Color.White.copy(alpha = 0.85f),
+                fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            Text(
+                text = "FBO: ${if (telemetry.isHalfFloat) "16-Bit Float" else "8-Bit RGBA"} | Buffers: ${telemetry.historyBufferCount}",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
+}
