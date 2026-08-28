@@ -375,18 +375,33 @@ class Camera2CaptureEngine(
         triggerPrecaptureAe {
             val isDone = AtomicBoolean(false)
             reader.setOnImageAvailableListener({ ir ->
-                val image = ir.acquireLatestImage() ?: return@setOnImageAvailableListener
-                if (isDone.compareAndSet(false, true)) {
-                    ir.setOnImageAvailableListener(null, null)
-                    CoroutineScope(Dispatchers.Default).launch {
-                        val bitmap = decodeImageToUprightBitmap(image)
-                        image.close()
-                        withContext(Dispatchers.Main) {
-                            onBitmapCaptured(bitmap)
+                while (true) {
+                    val image = try {
+                        ir.acquireNextImage()
+                    } catch (e: Exception) {
+                        null
+                    } ?: break
+
+                    if (isDone.compareAndSet(false, true)) {
+                        ir.setOnImageAvailableListener(null, null)
+                        CoroutineScope(Dispatchers.Default).launch {
+                            try {
+                                val bitmap = decodeImageToUprightBitmap(image)
+                                withContext(Dispatchers.Main) {
+                                    onBitmapCaptured(bitmap)
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error decoding single still", e)
+                                withContext(Dispatchers.Main) {
+                                    onBitmapCaptured(null)
+                                }
+                            } finally {
+                                image.close()
+                            }
                         }
+                    } else {
+                        image.close()
                     }
-                } else {
-                    image.close()
                 }
             }, cameraHandler)
 
@@ -474,22 +489,32 @@ class Camera2CaptureEngine(
             val burstStartMs = SystemClock.elapsedRealtime()
 
             reader.setOnImageAvailableListener({ ir ->
-                val img = ir.acquireLatestImage()
-                if (img != null) {
-                    val rawFrame = RawYuvFrame.fromImage(
-                        image = img,
-                        timestampNs = img.timestamp,
-                        exposureTimeNs = tTargetNanos,
-                        iso = isoPrime
-                    )
-                    synchronized(frames) {
-                        frames.add(rawFrame)
-                        timestamps.add(img.timestamp)
-                        exposureTimes.add(tTargetNanos)
-                        isos.add(isoPrime)
+                while (true) {
+                    val img = try {
+                        ir.acquireNextImage()
+                    } catch (e: Exception) {
+                        null
+                    } ?: break
+
+                    try {
+                        val rawFrame = RawYuvFrame.fromImage(
+                            image = img,
+                            timestampNs = img.timestamp,
+                            exposureTimeNs = tTargetNanos,
+                            iso = isoPrime
+                        )
+                        synchronized(frames) {
+                            frames.add(rawFrame)
+                            timestamps.add(img.timestamp)
+                            exposureTimes.add(tTargetNanos)
+                            isos.add(isoPrime)
+                        }
+                        latch.countDown()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing burst YUV frame", e)
+                    } finally {
+                        img.close() // Discipline: close immediately
                     }
-                    img.close() // Discipline: close immediately
-                    latch.countDown()
                 }
             }, cameraHandler)
 
@@ -506,6 +531,13 @@ class Camera2CaptureEngine(
 
             val finished = latch.await(2000, TimeUnit.MILLISECONDS)
             reader.setOnImageAvailableListener(null, null)
+            
+            // Cleanly drain any remaining unread frames to keep the buffer pool fresh
+            while (true) {
+                val leftover = try { reader.acquireNextImage() } catch (e: Exception) { null } ?: break
+                leftover.close()
+            }
+
             val burstWindowMs = SystemClock.elapsedRealtime() - burstStartMs
 
             // Unlock 3A after burst

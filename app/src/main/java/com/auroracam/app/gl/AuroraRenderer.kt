@@ -17,6 +17,7 @@ import com.auroracam.app.gl.passes.BurstMergePass
 import com.auroracam.app.gl.passes.CompositeBlendPass
 import com.auroracam.app.gl.passes.FilmCurvePass
 import com.auroracam.app.gl.passes.LiveBlendPass
+import com.auroracam.app.gl.passes.LocalToneMappingPass
 import com.auroracam.app.gl.passes.OesToFboPass
 import com.auroracam.app.gl.passes.PassThroughPass
 import com.auroracam.app.ui.CameraMode
@@ -50,6 +51,7 @@ class AuroraRenderer(
     private val liveBlendPass = LiveBlendPass()
     private val compositeBlendPass = CompositeBlendPass()
     private val filmCurvePass = FilmCurvePass()
+    private val localToneMappingPass = LocalToneMappingPass()
     private var burstMergePass: BurstMergePass? = null
 
     // 3D LUT Texture & FBOs
@@ -119,6 +121,7 @@ class AuroraRenderer(
         liveBlendPass.init()
         compositeBlendPass.init()
         filmCurvePass.init()
+        localToneMappingPass.init()
         lutTexture.init()
 
         // Upload default procedural LUT (or pending imported LUT)
@@ -260,7 +263,7 @@ class AuroraRenderer(
         if (elapsed >= STATS_LOG_INTERVAL_MS) {
             val fps = (frameCount * 1000.0) / elapsed
             Log.i(TAG, "FPS: ${"%.2f".format(fps)} (mode: $currentMode, stage: $dxStage, lookEnabled: $isLookEnabled, lut: ${lutTexture.size}³)")
-            onFpsUpdated(fps)
+            glSurfaceView.post { onFpsUpdated(fps) }
             frameCount = 0
             lastStatsLogTimeMs = now
         }
@@ -287,11 +290,6 @@ class AuroraRenderer(
         onFinished: (Bitmap) -> Unit
     ) {
         glSurfaceView.queueEvent {
-            if (!isLookEnabled || lookIntensity <= 0.0f) {
-                onFinished(sourceBitmap)
-                return@queueEvent
-            }
-
             val w = sourceBitmap.width
             val h = sourceBitmap.height
 
@@ -305,37 +303,57 @@ class AuroraRenderer(
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
             sourceBitmap.recycle()
 
-            val gradeFbo = Fbo(w, h, useHalfFloat = false)
-            gradeFbo.bind()
-            Log.i(TAG, "renderGradedStill BEGIN: sourceBitmap=${w}x${h}, gradeFbo.isHalfFloat=${gradeFbo.isHalfFloat}, viewport=${w}x${h}")
+            // 1. Local Tone Mapping (LTM) & Edge-Preserving Sharpening Pass
+            val ltmFbo = Fbo(w, h, useHalfFloat = isLookPrecision16f)
+            ltmFbo.bind()
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-
-            val timeSeconds = ((SystemClock.elapsedRealtime() % 3600000L) / 1000f)
-            val aspect = w.toFloat() / h.toFloat()
-
-            filmCurvePass.render(
+            localToneMappingPass.render(
                 srcTextureId = texSrc,
-                lutTextureId = lutTexture.textureId,
-                lutSize = lutTexture.size,
-                domainMin = lutTexture.domainMin,
-                domainMax = lutTexture.domainMax,
-                intensity = lookIntensity,
-                grain = lookGrain,
-                vignette = lookVignette,
-                halation = lookHalation,
-                timeSeconds = timeSeconds,
-                aspectRatio = aspect,
                 width = w,
-                height = h
+                height = h,
+                shadowLift = 0.40f,
+                highlightCompress = 0.20f,
+                sharpening = 0.30f
             )
-
-            val gradedBitmap = readFboToBitmap(gradeFbo, flipY = false)
-            gradeFbo.unbind(viewWidth, viewHeight)
-            gradeFbo.release()
-
+            ltmFbo.unbind(viewWidth, viewHeight)
             GLES30.glDeleteTextures(1, texIds, 0)
-            CaptureSaver.logSizeGuard(gradedBitmap.width, gradedBitmap.height, expectedWidth = w, expectedHeight = h)
-            onFinished(gradedBitmap)
+
+            val finalBitmap: Bitmap
+            if (isLookEnabled && lookIntensity > 0.0f) {
+                val gradeFbo = Fbo(w, h, useHalfFloat = false)
+                gradeFbo.bind()
+                Log.i(TAG, "renderGradedStill BEGIN: sourceBitmap=${w}x${h}, gradeFbo.isHalfFloat=${gradeFbo.isHalfFloat}, viewport=${w}x${h}")
+                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+
+                val timeSeconds = ((SystemClock.elapsedRealtime() % 3600000L) / 1000f)
+                val aspect = w.toFloat() / h.toFloat()
+
+                filmCurvePass.render(
+                    srcTextureId = ltmFbo.textureId,
+                    lutTextureId = lutTexture.textureId,
+                    lutSize = lutTexture.size,
+                    domainMin = lutTexture.domainMin,
+                    domainMax = lutTexture.domainMax,
+                    intensity = lookIntensity,
+                    grain = lookGrain,
+                    vignette = lookVignette,
+                    halation = lookHalation,
+                    timeSeconds = timeSeconds,
+                    aspectRatio = aspect,
+                    width = w,
+                    height = h
+                )
+
+                finalBitmap = readFboToBitmap(gradeFbo, flipY = false)
+                gradeFbo.unbind(viewWidth, viewHeight)
+                gradeFbo.release()
+            } else {
+                finalBitmap = readFboToBitmap(ltmFbo, flipY = false)
+            }
+
+            ltmFbo.release()
+            CaptureSaver.logSizeGuard(finalBitmap.width, finalBitmap.height, expectedWidth = w, expectedHeight = h)
+            onFinished(finalBitmap)
         }
     }
 
@@ -351,8 +369,8 @@ class AuroraRenderer(
 
             val mergePass = burstMergePass ?: BurstMergePass().also { burstMergePass = it }
 
-            // Intermediate merge FBO honors look_precision_16f if Look active
-            val mergeFbo = Fbo(width, height, useHalfFloat = (isLookEnabled && lookIntensity > 0.0f && isLookPrecision16f))
+            // 1. Intermediate merge FBO honors look_precision_16f
+            val mergeFbo = Fbo(width, height, useHalfFloat = isLookPrecision16f)
             mergeFbo.bind()
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
@@ -362,7 +380,24 @@ class AuroraRenderer(
                 height = height,
                 chromaSoften = true
             )
+            mergeFbo.unbind(viewWidth, viewHeight)
 
+            // 2. Local Tone Mapping (LTM) + Edge-Preserving Sharpening Pass
+            val ltmFbo = Fbo(width, height, useHalfFloat = isLookPrecision16f)
+            ltmFbo.bind()
+            GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+            localToneMappingPass.render(
+                srcTextureId = mergeFbo.textureId,
+                width = width,
+                height = height,
+                shadowLift = 0.45f,
+                highlightCompress = 0.25f,
+                sharpening = 0.35f
+            )
+            ltmFbo.unbind(viewWidth, viewHeight)
+            mergeFbo.release()
+
+            // 3. Signature Look Pass
             val finalBitmap: Bitmap
             if (isLookEnabled && lookIntensity > 0.0f) {
                 val gradeFbo = Fbo(width, height, useHalfFloat = false)
@@ -373,7 +408,7 @@ class AuroraRenderer(
                 val aspect = width.toFloat() / height.toFloat()
 
                 filmCurvePass.render(
-                    srcTextureId = mergeFbo.textureId,
+                    srcTextureId = ltmFbo.textureId,
                     lutTextureId = lutTexture.textureId,
                     lutSize = lutTexture.size,
                     domainMin = lutTexture.domainMin,
@@ -392,11 +427,10 @@ class AuroraRenderer(
                 gradeFbo.unbind(viewWidth, viewHeight)
                 gradeFbo.release()
             } else {
-                finalBitmap = readFboToBitmap(mergeFbo, flipY = false)
+                finalBitmap = readFboToBitmap(ltmFbo, flipY = false)
             }
 
-            mergeFbo.unbind(viewWidth, viewHeight)
-            mergeFbo.release()
+            ltmFbo.release()
 
             CaptureSaver.logSizeGuard(finalBitmap.width, finalBitmap.height, expectedWidth = width, expectedHeight = height)
 
@@ -538,6 +572,7 @@ class AuroraRenderer(
         liveBlendPass.release()
         compositeBlendPass.release()
         filmCurvePass.release()
+        localToneMappingPass.release()
         lutTexture.release()
         firstExposureFbo?.release()
         firstExposureFbo = null
