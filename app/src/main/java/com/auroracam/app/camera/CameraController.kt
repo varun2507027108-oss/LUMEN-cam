@@ -108,6 +108,45 @@ class CameraController(
         Log.i(TAG, "QuickStack Burst preference updated: burst_stack=$enabled")
     }
 
+    val cameraCharacteristics: android.hardware.camera2.CameraCharacteristics?
+        get() = captureEngine.cameraCharacteristics
+
+    val isRawSupported: Boolean
+        get() = captureEngine.isRawSupported
+
+    fun isRawCaptureEnabled(): Boolean {
+        val prefs = context.getSharedPreferences("aurora_cam_prefs", Context.MODE_PRIVATE)
+        return prefs.getBoolean("raw_capture_enabled", false)
+    }
+
+    fun setRawCaptureEnabled(enabled: Boolean) {
+        val prefs = context.getSharedPreferences("aurora_cam_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("raw_capture_enabled", enabled).apply()
+        captureEngine.isRawCaptureEnabled = enabled
+        Log.i(TAG, "RAW Sensor capture preference updated: raw_capture_enabled=$enabled")
+    }
+
+    fun getFlashMode(): FlashMode {
+        val prefs = context.getSharedPreferences("aurora_cam_prefs", Context.MODE_PRIVATE)
+        val name = prefs.getString("flash_mode", FlashMode.OFF.name)
+        return try {
+            FlashMode.valueOf(name ?: FlashMode.OFF.name)
+        } catch (e: Exception) {
+            FlashMode.OFF
+        }
+    }
+
+    fun setFlashMode(mode: FlashMode) {
+        val prefs = context.getSharedPreferences("aurora_cam_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("flash_mode", mode.name).apply()
+        captureEngine.setFlashMode(mode)
+        Log.i(TAG, "Flash mode preference updated: flash_mode=$mode")
+    }
+
+    fun setManualFocus(enabled: Boolean, distanceDiopters: Float = 0.0f) {
+        captureEngine.setManualFocus(enabled, distanceDiopters)
+    }
+
     fun setAeAwbLock(locked: Boolean) {
         captureEngine.setAeAwbLock(locked)
     }
@@ -128,8 +167,16 @@ class CameraController(
         captureEngine.setManualExposure(enabled, shutterSpeedNanos, iso)
     }
 
-    fun takePictureBitmap(onBitmapCaptured: (Bitmap?) -> Unit) {
-        captureEngine.captureSingleStill(isLegacyJpeg = isLegacyJpegPath(), onBitmapCaptured = onBitmapCaptured)
+    fun takePictureBitmap(
+        onBitmapCaptured: (Bitmap?) -> Unit,
+        onRawCaptured: ((android.media.Image, android.hardware.camera2.TotalCaptureResult) -> Unit)? = null
+    ) {
+        captureEngine.isRawCaptureEnabled = isRawCaptureEnabled()
+        captureEngine.captureSingleStill(
+            isLegacyJpeg = isLegacyJpegPath(),
+            onBitmapCaptured = onBitmapCaptured,
+            onRawCaptured = onRawCaptured
+        )
     }
 
     fun takeBurst(

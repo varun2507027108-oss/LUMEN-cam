@@ -30,6 +30,7 @@ import com.auroracam.app.gl.passes.BurstMergePass
 import com.auroracam.app.gl.passes.ChromaticAberrationPass
 import com.auroracam.app.gl.passes.CompositeBlendPass
 import com.auroracam.app.gl.passes.FilmCurvePass
+import com.auroracam.app.gl.passes.FocusPeakingPass
 import com.auroracam.app.gl.passes.LightTrailPass
 import com.auroracam.app.gl.passes.LiveBlendPass
 import com.auroracam.app.gl.passes.LocalToneMappingPass
@@ -83,6 +84,7 @@ class AuroraRenderer(
     private val motionExposurePass = MotionExposurePass()
     private val lightTrailPass = LightTrailPass()
     private val chromaticAberrationPass = ChromaticAberrationPass()
+    private val focusPeakingPass = FocusPeakingPass()
     private var burstMergePass: BurstMergePass? = null
     private val lutTexture = LutTexture()
 
@@ -108,6 +110,11 @@ class AuroraRenderer(
     @Volatile var dxBlendMode: Int = 1 // Default Screen (1)
     @Volatile var dxOpacity: Float = 1.0f
     @Volatile var dxFlipFirst: Boolean = false
+
+    // Focus Peaking state
+    @Volatile var isFocusPeakingEnabled: Boolean = false
+    @Volatile var focusPeakingSensitivity: Float = 0.20f
+    @Volatile var focusPeakingColorIndex: Int = 0 // 0: Mint, 1: Red, 2: Cyan, 3: Yellow
 
     // Signature Look state
     @Volatile var isLookEnabled: Boolean = true
@@ -212,6 +219,7 @@ class AuroraRenderer(
         motionExposurePass.init()
         lightTrailPass.init()
         chromaticAberrationPass.init()
+        focusPeakingPass.init()
         lutTexture.init()
 
         // Upload default procedural LUT (or pending imported LUT)
@@ -468,12 +476,14 @@ class AuroraRenderer(
             historyIndex = (historyIndex + 1) % 3
         }
 
-        // 4. Render final Look grade pass (Tone Curve + 3D LUT + Grain + Vignette) & Chromatic Aberration
+        // 4. Render final Look grade pass (Tone Curve + 3D LUT + Grain + Vignette) & Chromatic Aberration / Focus Peaking
         val effectiveIntensity = if (isLookEnabled) lookIntensity else 0.0f
         val timeSeconds = (SystemClock.elapsedRealtime() / 1000.0f) % 3600f
         val aspect = if (viewHeight > 0) viewWidth.toFloat() / viewHeight.toFloat() else 1.0f
 
-        if (chromaticAberrationIntensity > 0.001f && gradeOutputFbo != null) {
+        val needsIntermediateFbo = (chromaticAberrationIntensity > 0.001f || isFocusPeakingEnabled) && gradeOutputFbo != null
+
+        if (needsIntermediateFbo) {
             gradeOutputFbo?.bind()
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
             filmCurvePass.render(
@@ -494,12 +504,49 @@ class AuroraRenderer(
             )
             gradeOutputFbo?.unbind(viewWidth, viewHeight)
 
-            GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-            chromaticAberrationPass.render(
-                sceneTexId = gradeOutputFbo!!.textureId,
-                intensity = chromaticAberrationIntensity,
-                aspectRatio = aspect
-            )
+            var currentTexId = gradeOutputFbo!!.textureId
+
+            if (chromaticAberrationIntensity > 0.001f) {
+                if (isFocusPeakingEnabled && previewSceneFbo != null) {
+                    previewSceneFbo?.bind()
+                    GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                    chromaticAberrationPass.render(
+                        sceneTexId = currentTexId,
+                        intensity = chromaticAberrationIntensity,
+                        aspectRatio = aspect
+                    )
+                    previewSceneFbo?.unbind(viewWidth, viewHeight)
+                    currentTexId = previewSceneFbo!!.textureId
+                } else if (!isFocusPeakingEnabled) {
+                    GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                    chromaticAberrationPass.render(
+                        sceneTexId = currentTexId,
+                        intensity = chromaticAberrationIntensity,
+                        aspectRatio = aspect
+                    )
+                    currentTexId = 0
+                }
+            }
+
+            if (isFocusPeakingEnabled) {
+                val (pR, pG, pB) = when (focusPeakingColorIndex) {
+                    1 -> Triple(1.0f, 0.20f, 0.20f) // Optic Red
+                    2 -> Triple(0.0f, 0.85f, 1.0f)  // Electric Cyan
+                    3 -> Triple(1.0f, 0.90f, 0.0f)  // High-Vis Yellow
+                    else -> Triple(0.0f, 1.0f, 0.65f) // Focus Mint Green
+                }
+                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                focusPeakingPass.render(
+                    sceneTexId = currentTexId,
+                    threshold = focusPeakingSensitivity,
+                    intensity = 1.0f,
+                    width = viewWidth,
+                    height = viewHeight,
+                    peakColorR = pR,
+                    peakColorG = pG,
+                    peakColorB = pB
+                )
+            }
         } else {
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
             filmCurvePass.render(

@@ -4,6 +4,10 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.DngCreator
+import android.hardware.camera2.TotalCaptureResult
+import android.media.Image
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -200,6 +204,58 @@ object CaptureSaver {
             Log.e(TAG, "Error writing image $fileName to MediaStore", e)
             resolver.delete(uri, null, null)
             null
+        }
+    }
+
+    suspend fun saveDng(
+        context: Context,
+        rawImage: Image,
+        captureResult: TotalCaptureResult,
+        characteristics: CameraCharacteristics,
+        fileName: String,
+        telemetry: Telemetry? = null
+    ): Uri? = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/x-adobe-dng")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/$ALBUM_NAME")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        if (uri == null) {
+            Log.e(TAG, "Failed to create MediaStore entry for DNG $fileName")
+            return@withContext null
+        }
+
+        try {
+            resolver.openOutputStream(uri)?.use { outputStream ->
+                DngCreator(characteristics, captureResult).use { dngCreator ->
+                    dngCreator.writeImage(outputStream, rawImage)
+                }
+                outputStream.flush()
+            }
+
+            contentValues.clear()
+            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, contentValues, null, null)
+
+            val isoStr = telemetry?.iso?.toString() ?: "N/A"
+            val expStr = telemetry?.expTimeFormatted ?: "N/A"
+            Log.i(TAG, "DNG CAPTURE $fileName  ISO=$isoStr ExpTime=$expStr")
+            Log.i(TAG, "Saved DNG: $uri (path: Pictures/$ALBUM_NAME/$fileName)")
+            uri
+        } catch (e: Exception) {
+            Log.e(TAG, "Error writing DNG $fileName to MediaStore", e)
+            resolver.delete(uri, null, null)
+            null
+        } finally {
+            try {
+                rawImage.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing raw Image", e)
+            }
         }
     }
 

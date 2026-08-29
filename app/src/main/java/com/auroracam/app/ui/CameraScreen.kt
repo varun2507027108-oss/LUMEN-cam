@@ -15,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,6 +58,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import android.content.Intent
+import com.auroracam.app.camera.FlashMode
 import com.auroracam.app.camera.CameraController
 import com.auroracam.app.capture.CaptureSaver
 import com.auroracam.app.capture.DxMetadata
@@ -73,8 +75,11 @@ import com.auroracam.app.ui.theme.SlateBorder
 import com.auroracam.app.ui.theme.StatusGreen
 import com.auroracam.app.ui.theme.StatusRed
 import com.auroracam.app.ui.theme.TextSecondary
+import com.auroracam.app.ui.theme.WarmAmber
 import com.auroracam.app.ui.theme.White
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -100,6 +105,19 @@ fun CameraScreen() {
     var focusPoint by remember { mutableStateOf<Offset?>(null) }
     var evBias by remember { mutableFloatStateOf(0.0f) }
     var isAeAfLocked by remember { mutableStateOf(false) }
+    var showEvBadge by remember { mutableStateOf(false) }
+    var evBadgeJob by remember { mutableStateOf<Job?>(null) }
+
+    // Flash & RAW Capture State
+    var flashMode: FlashMode by remember { mutableStateOf(cameraController.getFlashMode()) }
+    var isRawCaptureEnabled by remember { mutableStateOf(cameraController.isRawCaptureEnabled()) }
+
+    // Manual Focus & Focus Peaking State
+    var isManualFocus by remember { mutableStateOf(false) }
+    var focusDistanceDiopters by remember { mutableFloatStateOf(0.0f) }
+    var isFocusPeakingEnabled by remember { mutableStateOf(false) }
+    var focusPeakingSensitivity by remember { mutableFloatStateOf(0.20f) }
+    var focusPeakingColorIndex by remember { mutableIntStateOf(0) }
 
     // Mode & Drawer State
     var cameraMode by remember { mutableStateOf(CameraMode.STANDARD) }
@@ -227,7 +245,7 @@ fun CameraScreen() {
             .fillMaxSize()
             .background(DarkBackground)
     ) {
-        // 1. OpenGL Viewport with Tap-to-Focus and Long-Press AE/AF Lock
+        // 1. OpenGL Viewport with Tap-to-Focus, Long-Press AE/AF Lock, and Vertical Drag EV Exposure Gesture
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -250,6 +268,20 @@ fun CameraScreen() {
                             cameraController.triggerTapToFocus(xNorm, yNorm)
                         }
                     )
+                }
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures { change, dragAmount ->
+                        change.consume()
+                        val step = -dragAmount * 0.008f
+                        evBias = (evBias + step).coerceIn(-2.0f, 2.0f)
+                        cameraController.setExposureCompensation(evBias)
+                        showEvBadge = true
+                        evBadgeJob?.cancel()
+                        evBadgeJob = coroutineScope.launch {
+                            delay(1500)
+                            showEvBadge = false
+                        }
+                    }
                 }
         ) {
             AndroidView(
@@ -278,6 +310,9 @@ fun CameraScreen() {
                         renderer.lightTrailDecay = lightTrailDecay
                         renderer.lightTrailBlendMode = lightTrailBlendMode
                         renderer.chromaticAberrationIntensity = chromaticAberration
+                        renderer.isFocusPeakingEnabled = isFocusPeakingEnabled
+                        renderer.focusPeakingSensitivity = focusPeakingSensitivity
+                        renderer.focusPeakingColorIndex = focusPeakingColorIndex
                         renderer.onGpuTelemetryUpdated = { stats -> gpuTelemetry = stats }
                         rendererRef = renderer
                         setRenderer(renderer)
@@ -298,6 +333,12 @@ fun CameraScreen() {
             onEvBiasChanged = { ev ->
                 evBias = ev
                 cameraController.setExposureCompensation(ev)
+                showEvBadge = true
+                evBadgeJob?.cancel()
+                evBadgeJob = coroutineScope.launch {
+                    delay(1500)
+                    showEvBadge = false
+                }
             },
             onDismiss = {
                 if (!isAeAfLocked) {
@@ -311,14 +352,64 @@ fun CameraScreen() {
             }
         )
 
-        // 4. Ultra-Minimal Top HUD Bar with Look Quick-Switcher
+        // Floating Center EV Exposure Compensation Badge HUD
+        AnimatedVisibility(
+            visible = showEvBadge,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xCC111111))
+                    .border(1.dp, Color(0x44FFFFFF), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                val sign = if (evBias > 0.05f) "+" else ""
+                Text(
+                    text = "EV $sign${"%.2f".format(evBias)}",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = if (kotlin.math.abs(evBias) < 0.05f) Color.White else WarmAmber
+                )
+            }
+        }
+
+        // 4. Ultra-Minimal Top HUD Bar with Look Quick-Switcher & Diagnostic Toggles
         CameraTopBar(
             currentFps = currentFps,
+            flashMode = flashMode,
+            onFlashModeToggled = {
+                val next = when (flashMode) {
+                    FlashMode.OFF -> FlashMode.AUTO
+                    FlashMode.AUTO -> FlashMode.ON
+                    FlashMode.ON -> FlashMode.TORCH
+                    FlashMode.TORCH -> FlashMode.OFF
+                }
+                flashMode = next
+                cameraController.setFlashMode(next)
+            },
+            isRawSupported = cameraController.isRawSupported,
+            isRawEnabled = isRawCaptureEnabled,
+            onRawToggled = {
+                val next = !isRawCaptureEnabled
+                isRawCaptureEnabled = next
+                cameraController.setRawCaptureEnabled(next)
+            },
             isHdrEnabled = isBurstStack,
             onHdrToggled = {
                 val next = !isBurstStack
                 isBurstStack = next
                 cameraController.setBurstStack(next)
+            },
+            isFocusPeakingEnabled = isFocusPeakingEnabled,
+            onFocusPeakingToggled = {
+                val next = !isFocusPeakingEnabled
+                isFocusPeakingEnabled = next
+                rendererRef?.isFocusPeakingEnabled = next
             },
             activeLutName = activeLutName,
             isLookEnabled = isLookEnabled,
@@ -478,44 +569,74 @@ fun CameraScreen() {
                                 }
                             } else {
                                 captureStatus = "Capturing..."
-                                cameraController.takePictureBitmap { rawBmp ->
-                                    if (rawBmp != null) {
-                                        captureStatus = "Grading..."
-                                        rendererRef?.renderGradedStill(rawBmp) { gradedBmp ->
+                                cameraController.takePictureBitmap(
+                                    onBitmapCaptured = { rawBmp ->
+                                        if (rawBmp != null) {
+                                            captureStatus = "Grading..."
+                                            rendererRef?.renderGradedStill(rawBmp) { gradedBmp ->
+                                                coroutineScope.launch(Dispatchers.IO) {
+                                                    val cropped = currentFormat.cropBitmap(gradedBmp)
+                                                    val fileName = CaptureSaver.generateCaptureFileName(
+                                                        path = "STD",
+                                                        isLegacy = isLegacyJpeg,
+                                                        lookName = activeLutName,
+                                                        isLookEnabled = isLookEnabled,
+                                                        intensity = lookIntensity
+                                                    )
+                                                    val uri = CaptureSaver.saveBitmap(
+                                                        context = context,
+                                                        bitmap = cropped,
+                                                        fileName = fileName,
+                                                        quality = 97,
+                                                        telemetry = cameraController.lastTelemetry
+                                                    )
+                                                    if (cropped != gradedBmp) {
+                                                        cropped.recycle()
+                                                    }
+                                                    gradedBmp.recycle()
+                                                    val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
+                                                    withContext(Dispatchers.Main) {
+                                                        lastCapturedUri = uri
+                                                        lastCapturedThumbnail = thumb
+                                                        isCapturing = false
+                                                        captureStatus = null
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            isCapturing = false
+                                            captureStatus = null
+                                        }
+                                    },
+                                    onRawCaptured = { rawImage, captureResult ->
+                                        val chars = cameraController.cameraCharacteristics
+                                        if (chars != null) {
                                             coroutineScope.launch(Dispatchers.IO) {
-                                                val cropped = currentFormat.cropBitmap(gradedBmp)
-                                                val fileName = CaptureSaver.generateCaptureFileName(
-                                                    path = "STD",
-                                                    isLegacy = isLegacyJpeg,
+                                                val dngFileName = "${CaptureSaver.generateProvenanceBaseName(
+                                                    path = "RAW",
+                                                    isLegacy = false,
                                                     lookName = activeLutName,
                                                     isLookEnabled = isLookEnabled,
                                                     intensity = lookIntensity
-                                                )
-                                                val uri = CaptureSaver.saveBitmap(
+                                                )}.dng"
+                                                CaptureSaver.saveDng(
                                                     context = context,
-                                                    bitmap = cropped,
-                                                    fileName = fileName,
-                                                    quality = 97,
+                                                    rawImage = rawImage,
+                                                    captureResult = captureResult,
+                                                    characteristics = chars,
+                                                    fileName = dngFileName,
                                                     telemetry = cameraController.lastTelemetry
                                                 )
-                                                if (cropped != gradedBmp) {
-                                                    cropped.recycle()
-                                                }
-                                                gradedBmp.recycle()
-                                                val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
-                                                withContext(Dispatchers.Main) {
-                                                    lastCapturedUri = uri
-                                                    lastCapturedThumbnail = thumb
-                                                    isCapturing = false
-                                                    captureStatus = null
-                                                }
+                                            }
+                                        } else {
+                                            try {
+                                                rawImage.close()
+                                            } catch (e: Exception) {
+                                                android.util.Log.w("CameraScreen", "Error closing raw image", e)
                                             }
                                         }
-                                    } else {
-                                        isCapturing = false
-                                        captureStatus = null
                                     }
-                                }
+                                )
                             }
                         }
                         CameraMode.DOUBLE_EXPOSURE -> {
@@ -527,77 +648,80 @@ fun CameraScreen() {
                                 DxStage.STAGE_2_LOCKED -> {
                                     isCapturing = true
                                     captureStatus = "Blending Frame 2..."
-                                    cameraController.takePictureBitmap { secondBitmap ->
-                                        if (secondBitmap == null) {
-                                            isCapturing = false
-                                            captureStatus = null
-                                            return@takePictureBitmap
-                                        }
-                                        rendererRef?.renderCompositeStill(secondBitmap) { firstBmp, secondBmp, compositeBmp ->
-                                            coroutineScope.launch(Dispatchers.IO) {
-                                                val baseName = CaptureSaver.generateProvenanceBaseName(
-                                                    path = "DX",
-                                                    isLegacy = isLegacyJpeg,
-                                                    lookName = activeLutName,
-                                                    isLookEnabled = isLookEnabled,
-                                                    intensity = lookIntensity
-                                                )
-                                                val firstFile = "${baseName}_first.jpg"
-                                                val secondFile = "${baseName}_second.jpg"
-                                                val compFile = "${baseName}.jpg"
-
-                                                val croppedFirst = currentFormat.cropBitmap(firstBmp)
-                                                val croppedSecond = currentFormat.cropBitmap(secondBmp)
-                                                val croppedComp = currentFormat.cropBitmap(compositeBmp)
-
-                                                val telemetry = cameraController.lastTelemetry
-                                                CaptureSaver.saveBitmap(context, croppedFirst, firstFile, quality = 97, telemetry = telemetry)
-                                                CaptureSaver.saveBitmap(context, croppedSecond, secondFile, quality = 97, telemetry = telemetry)
-                                                val compUri = CaptureSaver.saveBitmap(context, croppedComp, compFile, quality = 97, telemetry = telemetry)
-
-                                                if (croppedFirst != firstBmp) croppedFirst.recycle()
-                                                if (croppedSecond != secondBmp) croppedSecond.recycle()
-                                                if (croppedComp != compositeBmp) croppedComp.recycle()
-                                                firstBmp.recycle()
-                                                secondBmp.recycle()
-                                                compositeBmp.recycle()
-
-                                                DxMetadata.save(
-                                                    context,
-                                                    DxMetadata(
-                                                        firstFileName = firstFile,
-                                                        secondFileName = secondFile,
-                                                        compositeFileName = compFile,
-                                                        blendMode = blendMode.modeId,
-                                                        opacity = opacity,
-                                                        flipFirst = isFlipped
+                                    cameraController.takePictureBitmap(
+                                        onBitmapCaptured = { secondBitmap ->
+                                            if (secondBitmap == null) {
+                                                isCapturing = false
+                                                captureStatus = null
+                                                return@takePictureBitmap
+                                            }
+                                            rendererRef?.renderCompositeStill(secondBitmap) { firstBmp, secondBmp, compositeBmp ->
+                                                coroutineScope.launch(Dispatchers.IO) {
+                                                    val baseName = CaptureSaver.generateProvenanceBaseName(
+                                                        path = "DX",
+                                                        isLegacy = isLegacyJpeg,
+                                                        lookName = activeLutName,
+                                                        isLookEnabled = isLookEnabled,
+                                                        intensity = lookIntensity
                                                     )
-                                                )
+                                                    val firstFile = "${baseName}_first.jpg"
+                                                    val secondFile = "${baseName}_second.jpg"
+                                                    val compFile = "${baseName}.jpg"
 
-                                                cameraController.setAeAwbLock(false)
-                                                isAeAfLocked = false
-                                                evBias = 0.0f
-                                                cameraController.setExposureCompensation(0f)
+                                                    val croppedFirst = currentFormat.cropBitmap(firstBmp)
+                                                    val croppedSecond = currentFormat.cropBitmap(secondBmp)
+                                                    val croppedComp = currentFormat.cropBitmap(compositeBmp)
 
-                                                val thumb = compUri?.let { CaptureSaver.loadThumbnail(context, it) }
-                                                withContext(Dispatchers.Main) {
-                                                    lastCapturedUri = compUri
-                                                    lastCapturedThumbnail = thumb
-                                                    isCapturing = false
-                                                    captureStatus = null
+                                                    val telemetry = cameraController.lastTelemetry
+                                                    CaptureSaver.saveBitmap(context, croppedFirst, firstFile, quality = 97, telemetry = telemetry)
+                                                    CaptureSaver.saveBitmap(context, croppedSecond, secondFile, quality = 97, telemetry = telemetry)
+                                                    val compUri = CaptureSaver.saveBitmap(context, croppedComp, compFile, quality = 97, telemetry = telemetry)
+
+                                                    if (croppedFirst != firstBmp) croppedFirst.recycle()
+                                                    if (croppedSecond != secondBmp) croppedSecond.recycle()
+                                                    if (croppedComp != compositeBmp) croppedComp.recycle()
+                                                    firstBmp.recycle()
+                                                    secondBmp.recycle()
+                                                    compositeBmp.recycle()
+
+                                                    DxMetadata.save(
+                                                        context,
+                                                        DxMetadata(
+                                                            firstFileName = firstFile,
+                                                            secondFileName = secondFile,
+                                                            compositeFileName = compFile,
+                                                            blendMode = blendMode.modeId,
+                                                            opacity = opacity,
+                                                            flipFirst = isFlipped
+                                                        )
+                                                    )
+
+                                                    cameraController.setAeAwbLock(false)
+                                                    isAeAfLocked = false
+                                                    evBias = 0.0f
+                                                    cameraController.setExposureCompensation(0f)
+
+                                                    val thumb = compUri?.let { CaptureSaver.loadThumbnail(context, it) }
+                                                    withContext(Dispatchers.Main) {
+                                                        lastCapturedUri = compUri
+                                                        lastCapturedThumbnail = thumb
+                                                        isCapturing = false
+                                                        captureStatus = null
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
+                                    )
                                 }
                             }
                         }
                         CameraMode.TEMPORAL_ECHO, CameraMode.MOTION_EXPOSURE, CameraMode.LIGHT_TRAILS -> {
                             isCapturing = true
                             captureStatus = "Capturing high-res frame..."
-                            cameraController.takePictureBitmap { highResBmp ->
-                                if (highResBmp != null && rendererRef != null) {
-                                    rendererRef?.renderTemporalCreativeStill(highResBmp, cameraMode) { finalBmp ->
+                            cameraController.takePictureBitmap(
+                                onBitmapCaptured = { highResBmp ->
+                                    if (highResBmp != null && rendererRef != null) {
+                                        rendererRef?.renderTemporalCreativeStill(highResBmp, cameraMode) { finalBmp ->
                                         coroutineScope.launch(Dispatchers.IO) {
                                             val cropped = currentFormat.cropBitmap(finalBmp)
                                             val prefix = when (cameraMode) {
@@ -672,11 +796,12 @@ fun CameraScreen() {
                                     }
                                 }
                             }
-                        }
+                        )
                     }
                 }
-            )
-        }
+            }
+        )
+    }
 
         // 7. Modal Creative Controls Drawer with Viewfinder Scrim
         if (isDrawerOpen) {
@@ -701,176 +826,214 @@ fun CameraScreen() {
             exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
         ) {
             CreativeDrawer(
-                    cameraMode = cameraMode,
-                    onModeChanged = { mode ->
-                        cameraMode = mode
-                        rendererRef?.currentMode = mode
-                        if (mode == CameraMode.LIGHT_TRAILS) {
-                            rendererRef?.clearLightTrails()
-                        }
-                        if (mode == CameraMode.STANDARD) {
-                            rendererRef?.retakeFirstExposure()
-                            cameraController.setAeAwbLock(false)
-                            isAeAfLocked = false
-                            evBias = 0.0f
-                            cameraController.setExposureCompensation(0f)
-                        }
-                    },
-                    isLookEnabled = isLookEnabled,
-                    onLookEnabledChanged = { enabled ->
-                        isLookEnabled = enabled
-                        rendererRef?.isLookEnabled = enabled
-                    },
-                    activeLutName = activeLutName,
-                    onSelectPreset = { preset ->
-                        val res = lutManager.selectPreset(preset)
-                        applyLookActivation(res)
-                    },
-                    onPickLutFile = { lutPickerLauncher.launch(arrayOf("*/*")) },
-                    onGenerateDebugLuts = {
-                        coroutineScope.launch {
-                            DebugLutGenerator.generateDebugCubes(context)
-                            cachedLutsList = lutManager.listCachedLuts()
-                        }
-                    },
-                    availableLuts = cachedLutsList,
-                    onSelectCachedLut = { file ->
-                        coroutineScope.launch {
-                            val res = lutManager.selectCachedLut(file)
-                            applyLookActivation(res)
-                        }
-                    },
-                    onResetToDefaultLut = {
-                        val res = lutManager.resetToDefault()
-                        applyLookActivation(res)
-                    },
-                    lookIntensity = lookIntensity,
-                    onLookIntensityChanged = { intensity ->
-                        lookIntensity = intensity
-                        rendererRef?.lookIntensity = intensity
-                        lutManager.saveUserOverride(
-                            activeLutName,
-                            LookUniforms(intensity, lookHalation, lookGrain, lookVignette, chromaticAberration)
-                        )
-                    },
-                    lookHalation = lookHalation,
-                    onLookHalationChanged = { halo ->
-                        lookHalation = halo
-                        rendererRef?.lookHalation = halo
-                        lutManager.saveUserOverride(
-                            activeLutName,
-                            LookUniforms(lookIntensity, halo, lookGrain, lookVignette, chromaticAberration)
-                        )
-                    },
-                    lookGrain = lookGrain,
-                    onLookGrainChanged = { grain ->
-                        lookGrain = grain
-                        rendererRef?.lookGrain = grain
-                        lutManager.saveUserOverride(
-                            activeLutName,
-                            LookUniforms(lookIntensity, lookHalation, grain, lookVignette, chromaticAberration)
-                        )
-                    },
-                    lookVignette = lookVignette,
-                    onLookVignetteChanged = { vig ->
-                        lookVignette = vig
-                        rendererRef?.lookVignette = vig
-                        lutManager.saveUserOverride(
-                            activeLutName,
-                            LookUniforms(lookIntensity, lookHalation, lookGrain, vig, chromaticAberration)
-                        )
-                    },
-                    onResetLookUniforms = {
-                        val defUniforms = lutManager.resetUserOverrides(activeLutName)
-                        lookIntensity = defUniforms.intensity
-                        lookHalation = defUniforms.halation
-                        lookGrain = defUniforms.grain
-                        lookVignette = defUniforms.vignette
-                        chromaticAberration = defUniforms.chromaticAberration
-                        rendererRef?.updateLookUniforms(
-                            intensity = defUniforms.intensity,
-                            halation = defUniforms.halation,
-                            grain = defUniforms.grain,
-                            vignette = defUniforms.vignette,
-                            chromaticAberration = defUniforms.chromaticAberration
-                        )
-                    },
-                    temporalEchoDecay = temporalEchoDecay,
-                    onTemporalEchoDecayChanged = { decay ->
-                        temporalEchoDecay = decay
-                        rendererRef?.temporalEchoDecay = decay
-                    },
-                    motionThreshold = motionThreshold,
-                    onMotionThresholdChanged = { thresh ->
-                        motionThreshold = thresh
-                        rendererRef?.motionThreshold = thresh
-                    },
-                    lightTrailDecay = lightTrailDecay,
-                    onLightTrailDecayChanged = { decay ->
-                        lightTrailDecay = decay
-                        rendererRef?.lightTrailDecay = decay
-                    },
-                    lightTrailBlendMode = lightTrailBlendMode,
-                    onLightTrailBlendModeChanged = { mode ->
-                        lightTrailBlendMode = mode
-                        rendererRef?.lightTrailBlendMode = mode
-                    },
-                    chromaticAberration = chromaticAberration,
-                    onChromaticAberrationChanged = { ca ->
-                        chromaticAberration = ca
-                        rendererRef?.chromaticAberrationIntensity = ca
-                        lutManager.saveUserOverride(
-                            activeLutName,
-                            LookUniforms(lookIntensity, lookHalation, lookGrain, lookVignette, ca)
-                        )
-                    },
-                    onClearLightTrails = {
+                cameraMode = cameraMode,
+                onModeChanged = { mode ->
+                    cameraMode = mode
+                    rendererRef?.currentMode = mode
+                    if (mode == CameraMode.LIGHT_TRAILS) {
                         rendererRef?.clearLightTrails()
-                    },
-                    currentWheelParam = currentWheelParam,
-                    onSelectWheelParam = { param ->
-                        currentWheelParam = param
-                    },
-                    evBias = evBias,
-                    onEvBiasChanged = { ev ->
-                        evBias = ev
-                        cameraController.setExposureCompensation(ev)
-                    },
-                    currentFormat = currentFormat,
-                    onFormatChanged = { format -> currentFormat = format },
-                    isBurstStack = isBurstStack,
-                    onBurstStackToggled = {
-                        val next = !isBurstStack
-                        isBurstStack = next
-                        cameraController.setBurstStack(next)
-                    },
-                    isLegacyJpeg = isLegacyJpeg,
-                    onLegacyJpegToggled = {
-                        val next = !isLegacyJpeg
-                        isLegacyJpeg = next
-                        cameraController.setLegacyJpegPath(next)
-                    },
-                    isLookPrecision16f = isLookPrecision16f,
-                    onLookPrecision16fToggled = {
-                        val next = !isLookPrecision16f
-                        isLookPrecision16f = next
-                        cameraController.setLookPrecision16f(next)
-                        rendererRef?.setLookPrecision16f(next)
-                    },
-                    isPreviewBufferHd = isPreviewBufferHd,
-                    onPreviewBufferHdToggled = {
-                        val next = !isPreviewBufferHd
-                        isPreviewBufferHd = next
-                        cameraController.setPreviewBufferHd(next)
-                    },
-                    showGpuOverlay = showGpuOverlay,
-                    onShowGpuOverlayToggled = {
-                        showGpuOverlay = !showGpuOverlay
-                    },
-                    onCaptureContactSheet7Up = {
-                        isCapturing = true
-                        captureStatus = "Rendering 7-Up Contact Sheet..."
-                        cameraController.takePictureBitmap { sourceBitmap ->
+                    }
+                    if (mode == CameraMode.STANDARD) {
+                        rendererRef?.retakeFirstExposure()
+                        cameraController.setAeAwbLock(false)
+                        isAeAfLocked = false
+                        evBias = 0.0f
+                        cameraController.setExposureCompensation(0f)
+                    }
+                },
+                isLookEnabled = isLookEnabled,
+                onLookEnabledChanged = { enabled ->
+                    isLookEnabled = enabled
+                    rendererRef?.isLookEnabled = enabled
+                },
+                activeLutName = activeLutName,
+                onSelectPreset = { preset ->
+                    val res = lutManager.selectPreset(preset)
+                    applyLookActivation(res)
+                },
+                onPickLutFile = { lutPickerLauncher.launch(arrayOf("*/*")) },
+                onGenerateDebugLuts = {
+                    coroutineScope.launch {
+                        DebugLutGenerator.generateDebugCubes(context)
+                        cachedLutsList = lutManager.listCachedLuts()
+                    }
+                },
+                availableLuts = cachedLutsList,
+                onSelectCachedLut = { file ->
+                    coroutineScope.launch {
+                        val res = lutManager.selectCachedLut(file)
+                        applyLookActivation(res)
+                    }
+                },
+                onResetToDefaultLut = {
+                    val res = lutManager.resetToDefault()
+                    applyLookActivation(res)
+                },
+                lookIntensity = lookIntensity,
+                onLookIntensityChanged = { intensity ->
+                    lookIntensity = intensity
+                    rendererRef?.lookIntensity = intensity
+                    lutManager.saveUserOverride(
+                        activeLutName,
+                        LookUniforms(intensity, lookHalation, lookGrain, lookVignette, chromaticAberration)
+                    )
+                },
+                lookHalation = lookHalation,
+                onLookHalationChanged = { halo ->
+                    lookHalation = halo
+                    rendererRef?.lookHalation = halo
+                    lutManager.saveUserOverride(
+                        activeLutName,
+                        LookUniforms(lookIntensity, halo, lookGrain, lookVignette, chromaticAberration)
+                    )
+                },
+                lookGrain = lookGrain,
+                onLookGrainChanged = { grain ->
+                    lookGrain = grain
+                    rendererRef?.lookGrain = grain
+                    lutManager.saveUserOverride(
+                        activeLutName,
+                        LookUniforms(lookIntensity, lookHalation, grain, lookVignette, chromaticAberration)
+                    )
+                },
+                lookVignette = lookVignette,
+                onLookVignetteChanged = { vig ->
+                    lookVignette = vig
+                    rendererRef?.lookVignette = vig
+                    lutManager.saveUserOverride(
+                        activeLutName,
+                        LookUniforms(lookIntensity, lookHalation, lookGrain, vig, chromaticAberration)
+                    )
+                },
+                onResetLookUniforms = {
+                    val defUniforms = lutManager.resetUserOverrides(activeLutName)
+                    lookIntensity = defUniforms.intensity
+                    lookHalation = defUniforms.halation
+                    lookGrain = defUniforms.grain
+                    lookVignette = defUniforms.vignette
+                    chromaticAberration = defUniforms.chromaticAberration
+                    rendererRef?.updateLookUniforms(
+                        intensity = defUniforms.intensity,
+                        halation = defUniforms.halation,
+                        grain = defUniforms.grain,
+                        vignette = defUniforms.vignette,
+                        chromaticAberration = defUniforms.chromaticAberration
+                    )
+                },
+                // Focus & Peaking Controls
+                isManualFocus = isManualFocus,
+                onManualFocusToggled = { mf ->
+                    isManualFocus = mf
+                    cameraController.setManualFocus(mf, focusDistanceDiopters)
+                },
+                focusDistanceDiopters = focusDistanceDiopters,
+                onFocusDistanceChanged = { dist ->
+                    focusDistanceDiopters = dist
+                    if (isManualFocus) {
+                        cameraController.setManualFocus(true, dist)
+                    }
+                },
+                isFocusPeakingEnabled = isFocusPeakingEnabled,
+                onFocusPeakingToggled = {
+                    val next = !isFocusPeakingEnabled
+                    isFocusPeakingEnabled = next
+                    rendererRef?.isFocusPeakingEnabled = next
+                },
+                focusPeakingSensitivity = focusPeakingSensitivity,
+                onFocusPeakingSensitivityChanged = { s ->
+                    focusPeakingSensitivity = s
+                    rendererRef?.focusPeakingSensitivity = s
+                },
+                focusPeakingColorIndex = focusPeakingColorIndex,
+                onFocusPeakingColorIndexChanged = { idx ->
+                    focusPeakingColorIndex = idx
+                    rendererRef?.focusPeakingColorIndex = idx
+                },
+                // Effects & Creative Controls
+                temporalEchoDecay = temporalEchoDecay,
+                onTemporalEchoDecayChanged = { decay ->
+                    temporalEchoDecay = decay
+                    rendererRef?.temporalEchoDecay = decay
+                },
+                motionThreshold = motionThreshold,
+                onMotionThresholdChanged = { thresh ->
+                    motionThreshold = thresh
+                    rendererRef?.motionThreshold = thresh
+                },
+                lightTrailDecay = lightTrailDecay,
+                onLightTrailDecayChanged = { decay ->
+                    lightTrailDecay = decay
+                    rendererRef?.lightTrailDecay = decay
+                },
+                lightTrailBlendMode = lightTrailBlendMode,
+                onLightTrailBlendModeChanged = { mode ->
+                    lightTrailBlendMode = mode
+                    rendererRef?.lightTrailBlendMode = mode
+                },
+                chromaticAberration = chromaticAberration,
+                onChromaticAberrationChanged = { ca ->
+                    chromaticAberration = ca
+                    rendererRef?.chromaticAberrationIntensity = ca
+                    lutManager.saveUserOverride(
+                        activeLutName,
+                        LookUniforms(lookIntensity, lookHalation, lookGrain, lookVignette, ca)
+                    )
+                },
+                onClearLightTrails = {
+                    rendererRef?.clearLightTrails()
+                },
+                currentWheelParam = currentWheelParam,
+                onSelectWheelParam = { param ->
+                    currentWheelParam = param
+                },
+                evBias = evBias,
+                onEvBiasChanged = { ev ->
+                    evBias = ev
+                    cameraController.setExposureCompensation(ev)
+                },
+                currentFormat = currentFormat,
+                onFormatChanged = { format -> currentFormat = format },
+                isBurstStack = isBurstStack,
+                onBurstStackToggled = {
+                    val next = !isBurstStack
+                    isBurstStack = next
+                    cameraController.setBurstStack(next)
+                },
+                isRawSupported = cameraController.isRawSupported,
+                isRawEnabled = isRawCaptureEnabled,
+                onRawToggled = {
+                    val next = !isRawCaptureEnabled
+                    isRawCaptureEnabled = next
+                    cameraController.setRawCaptureEnabled(next)
+                },
+                isLegacyJpeg = isLegacyJpeg,
+                onLegacyJpegToggled = {
+                    val next = !isLegacyJpeg
+                    isLegacyJpeg = next
+                    cameraController.setLegacyJpegPath(next)
+                },
+                isLookPrecision16f = isLookPrecision16f,
+                onLookPrecision16fToggled = {
+                    val next = !isLookPrecision16f
+                    isLookPrecision16f = next
+                    cameraController.setLookPrecision16f(next)
+                    rendererRef?.setLookPrecision16f(next)
+                },
+                isPreviewBufferHd = isPreviewBufferHd,
+                onPreviewBufferHdToggled = {
+                    val next = !isPreviewBufferHd
+                    isPreviewBufferHd = next
+                    cameraController.setPreviewBufferHd(next)
+                },
+                showGpuOverlay = showGpuOverlay,
+                onShowGpuOverlayToggled = {
+                    showGpuOverlay = !showGpuOverlay
+                },
+                onCaptureContactSheet7Up = {
+                    isCapturing = true
+                    captureStatus = "Rendering 7-Up Contact Sheet..."
+                    cameraController.takePictureBitmap(
+                        onBitmapCaptured = { sourceBitmap ->
                             if (sourceBitmap != null && rendererRef != null) {
                                 rendererRef?.renderContactSheet7Up(sourceBitmap) { sheetBitmap ->
                                     coroutineScope.launch(Dispatchers.IO) {
@@ -905,32 +1068,33 @@ fun CameraScreen() {
                                 captureStatus = null
                             }
                         }
-                    },
-                    dxStage = dxStage,
-                    dxBlendMode = blendMode,
-                    onBlendModeSelected = { mode ->
-                        blendMode = mode
-                        rendererRef?.dxBlendMode = mode.modeId
-                    },
-                    dxOpacity = opacity,
-                    onOpacityChanged = { op ->
-                        opacity = op
-                        rendererRef?.dxOpacity = op
-                    },
-                    dxIsFlipped = isFlipped,
-                    onFlipToggled = {
-                        isFlipped = !isFlipped
-                        rendererRef?.dxFlipFirst = isFlipped
-                    },
-                    onRetakeClicked = {
-                        rendererRef?.retakeFirstExposure()
-                        cameraController.setAeAwbLock(false)
-                        isAeAfLocked = false
-                        evBias = 0.0f
-                        cameraController.setExposureCompensation(0f)
-                    },
-                    onClose = { isDrawerOpen = false }
-                )
+                    )
+                },
+                dxStage = dxStage,
+                dxBlendMode = blendMode,
+                onBlendModeSelected = { mode ->
+                    blendMode = mode
+                    rendererRef?.dxBlendMode = mode.modeId
+                },
+                dxOpacity = opacity,
+                onOpacityChanged = { op ->
+                    opacity = op
+                    rendererRef?.dxOpacity = op
+                },
+                dxIsFlipped = isFlipped,
+                onFlipToggled = {
+                    isFlipped = !isFlipped
+                    rendererRef?.dxFlipFirst = isFlipped
+                },
+                onRetakeClicked = {
+                    rendererRef?.retakeFirstExposure()
+                    cameraController.setAeAwbLock(false)
+                    isAeAfLocked = false
+                    evBias = 0.0f
+                    cameraController.setExposureCompensation(0f)
+                },
+                onClose = { isDrawerOpen = false }
+            )
             }
 
         // 8. Fullscreen In-App Photo Viewer Dialog

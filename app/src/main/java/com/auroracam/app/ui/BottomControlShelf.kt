@@ -109,6 +109,17 @@ fun CreativeDrawer(
     lookVignette: Float = 0.12f,
     onLookVignetteChanged: (Float) -> Unit = {},
     onResetLookUniforms: () -> Unit = {},
+    // Focus & Peaking Controls
+    isManualFocus: Boolean = false,
+    onManualFocusToggled: (Boolean) -> Unit = {},
+    focusDistanceDiopters: Float = 0.0f,
+    onFocusDistanceChanged: (Float) -> Unit = {},
+    isFocusPeakingEnabled: Boolean = false,
+    onFocusPeakingToggled: () -> Unit = {},
+    focusPeakingSensitivity: Float = 0.20f,
+    onFocusPeakingSensitivityChanged: (Float) -> Unit = {},
+    focusPeakingColorIndex: Int = 0,
+    onFocusPeakingColorIndexChanged: (Int) -> Unit = {},
     // Effects & Creative Controls
     temporalEchoDecay: Float = 0.75f,
     onTemporalEchoDecayChanged: (Float) -> Unit = {},
@@ -131,6 +142,9 @@ fun CreativeDrawer(
     // Advanced Toggles
     isBurstStack: Boolean,
     onBurstStackToggled: () -> Unit,
+    isRawSupported: Boolean = false,
+    isRawEnabled: Boolean = false,
+    onRawToggled: () -> Unit = {},
     isLegacyJpeg: Boolean,
     onLegacyJpegToggled: () -> Unit,
     isLookPrecision16f: Boolean,
@@ -711,16 +725,157 @@ fun CreativeDrawer(
 
             ShelfTab.PRO -> {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Aspect Ratio formats
+                    // 1. Manual Focus & Peaking Controls
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("FOCUS", color = NeutralSlate, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(54.dp))
+
+                        FilterChip(
+                            selected = isManualFocus,
+                            onClick = { onManualFocusToggled(!isManualFocus) },
+                            label = { Text(if (isManualFocus) "MANUAL FOCUS (MF)" else "AUTO FOCUS (AF)", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = WarmAmber,
+                                selectedLabelColor = SurfaceDark,
+                                containerColor = SurfaceElevated,
+                                labelColor = PureWhite
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isManualFocus,
+                                borderColor = BorderHairline,
+                                selectedBorderColor = WarmAmber
+                            ),
+                            modifier = Modifier.height(26.dp)
+                        )
+
+                        FilterChip(
+                            selected = isFocusPeakingEnabled,
+                            onClick = onFocusPeakingToggled,
+                            label = { Text(if (isFocusPeakingEnabled) "PEAKING ON" else "PEAKING OFF", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = com.auroracam.app.ui.theme.FocusMint,
+                                selectedLabelColor = SurfaceDark,
+                                containerColor = SurfaceElevated,
+                                labelColor = PureWhite
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isFocusPeakingEnabled,
+                                borderColor = BorderHairline,
+                                selectedBorderColor = com.auroracam.app.ui.theme.FocusMint
+                            ),
+                            modifier = Modifier.height(26.dp)
+                        )
+                    }
+
+                    // Focus Distance Slider (when MF is active)
+                    if (isManualFocus) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val distLabel = if (focusDistanceDiopters <= 0.05f) "INF" else "${"%.1f".format(focusDistanceDiopters)}D"
+                            Text(
+                                text = "Dist $distLabel",
+                                color = NeutralSlate,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.width(72.dp)
+                            )
+                            Slider(
+                                value = focusDistanceDiopters,
+                                onValueChange = onFocusDistanceChanged,
+                                valueRange = 0.0f..10.0f,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(18.dp),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = WarmAmber,
+                                    activeTrackColor = WarmAmber,
+                                    inactiveTrackColor = SurfaceElevated
+                                )
+                            )
+                        }
+                    }
+
+                    // Peaking Sensitivity & Color selector (when Peaking is active)
+                    if (isFocusPeakingEnabled) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Thresh ${(focusPeakingSensitivity * 100).toInt()}%",
+                                color = NeutralSlate,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.width(72.dp)
+                            )
+                            Slider(
+                                value = focusPeakingSensitivity,
+                                onValueChange = onFocusPeakingSensitivityChanged,
+                                valueRange = 0.05f..0.45f,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(18.dp),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = com.auroracam.app.ui.theme.FocusMint,
+                                    activeTrackColor = com.auroracam.app.ui.theme.FocusMint,
+                                    inactiveTrackColor = SurfaceElevated
+                                )
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("COLOR", color = NeutralSlate, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(54.dp))
+                            listOf(0 to "MINT", 1 to "RED", 2 to "CYAN", 3 to "YELLOW").forEach { (idx, name) ->
+                                val isSelected = focusPeakingColorIndex == idx
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { onFocusPeakingColorIndexChanged(idx) },
+                                    label = { Text(name, fontSize = 9.5.sp, fontFamily = FontFamily.Monospace) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = WarmAmber,
+                                        selectedLabelColor = SurfaceDark,
+                                        containerColor = SurfaceElevated,
+                                        labelColor = PureWhite
+                                    ),
+                                    border = FilterChipDefaults.filterChipBorder(
+                                        enabled = true,
+                                        selected = isSelected,
+                                        borderColor = BorderHairline,
+                                        selectedBorderColor = WarmAmber
+                                    ),
+                                    modifier = Modifier.height(24.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // 2. Aspect Ratio formats
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("FORMAT", color = NeutralSlate, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(64.dp))
+                        Text("FORMAT", color = NeutralSlate, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(54.dp))
                         FormatMode.values().forEach { mode ->
                             val isSelected = currentFormat == mode
                             FilterChip(
@@ -744,7 +899,7 @@ fun CreativeDrawer(
                         }
                     }
 
-                    // Architecture Toggles Row
+                    // 3. Architecture Toggles Row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -752,6 +907,27 @@ fun CreativeDrawer(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        if (isRawSupported) {
+                            FilterChip(
+                                selected = isRawEnabled,
+                                onClick = onRawToggled,
+                                label = { Text(if (isRawEnabled) "RAW (DNG) Stream ON" else "RAW Disabled (JPG Only)", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = WarmAmber,
+                                    selectedLabelColor = SurfaceDark,
+                                    containerColor = SurfaceElevated,
+                                    labelColor = PureWhite
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isRawEnabled,
+                                    borderColor = BorderHairline,
+                                    selectedBorderColor = WarmAmber
+                                ),
+                                modifier = Modifier.height(26.dp)
+                            )
+                        }
+
                         FilterChip(
                             selected = isLookPrecision16f,
                             onClick = onLookPrecision16fToggled,
@@ -829,7 +1005,7 @@ fun CreativeDrawer(
                         )
                     }
 
-                    // Developer & Color Science Tools Row
+                    // 4. Developer & Color Science Tools Row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -837,7 +1013,7 @@ fun CreativeDrawer(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("DEV TOOLS", color = NeutralSlate, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(64.dp))
+                        Text("DEV TOOLS", color = NeutralSlate, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(54.dp))
                         FilterChip(
                             selected = false,
                             onClick = onCaptureContactSheet7Up,

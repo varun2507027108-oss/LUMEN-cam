@@ -42,6 +42,13 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
+enum class FlashMode(val label: String) {
+    OFF("OFF"),
+    AUTO("AUTO"),
+    ON("ON"),
+    TORCH("TORCH")
+}
+
 class Camera2CaptureEngine(
     private val context: Context
 ) {
@@ -63,6 +70,7 @@ class Camera2CaptureEngine(
     private var previewSurface: Surface? = null
     private var captureYuvReader: ImageReader? = null
     private var captureJpegReader: ImageReader? = null
+    private var captureRawReader: ImageReader? = null
 
     private var currentCameraId: String = "0"
     private var characteristics: CameraCharacteristics? = null
@@ -74,6 +82,33 @@ class Camera2CaptureEngine(
         private set
 
     var resolvedCaptureSize: Size = PREFERRED_CAPTURE_SIZE
+        private set
+
+    var resolvedRawSize: Size? = null
+        private set
+
+    val cameraCharacteristics: CameraCharacteristics?
+        get() = characteristics
+
+    val isRawSupported: Boolean
+        get() {
+            val caps = characteristics?.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: return false
+            return caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW)
+        }
+
+    var flashMode: FlashMode = FlashMode.OFF
+        private set
+
+    var isManualFocus: Boolean = false
+        private set
+
+    var manualFocusDistance: Float = 0.0f
+        private set
+
+    var manualShutterNanos: Long = 500_000_000L
+        private set
+
+    var manualIso: Int = 50
         private set
 
     private var isAeAwbLocked = false
@@ -172,6 +207,7 @@ class Camera2CaptureEngine(
                 )
 
                 captureJpegReader?.close()
+                captureJpegReader = null
                 if (isLegacyJpeg) {
                     captureJpegReader = ImageReader.newInstance(
                         resolvedCaptureSize.width,
@@ -179,6 +215,25 @@ class Camera2CaptureEngine(
                         ImageFormat.JPEG,
                         2
                     )
+                }
+
+                captureRawReader?.close()
+                captureRawReader = null
+                resolvedRawSize = null
+                if (isRawSupported) {
+                    val map = characteristics?.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                    val rawSizes = map?.getOutputSizes(ImageFormat.RAW_SENSOR)
+                    val maxRaw = rawSizes?.maxByOrNull { it.width * it.height }
+                    if (maxRaw != null) {
+                        captureRawReader = ImageReader.newInstance(
+                            maxRaw.width,
+                            maxRaw.height,
+                            ImageFormat.RAW_SENSOR,
+                            2
+                        )
+                        resolvedRawSize = maxRaw
+                        Log.i(TAG, "RAW Sensor ImageReader configured size: ${maxRaw.width}x${maxRaw.height}")
+                    }
                 }
 
                 // EV Compensation limits
@@ -244,9 +299,11 @@ class Camera2CaptureEngine(
         val preview = previewSurface ?: return
         val yuvReader = captureYuvReader ?: return
         val jpegReader = captureJpegReader
+        val rawReader = captureRawReader
 
         val surfaces = mutableListOf<Surface>(preview, yuvReader.surface)
         jpegReader?.let { surfaces.add(it.surface) }
+        rawReader?.let { surfaces.add(it.surface) }
 
         CameraProbe.checkSessionConfigurationSupport(
             device = device,
@@ -284,6 +341,59 @@ class Camera2CaptureEngine(
         }
     }
 
+    private fun applyPreviewSettings(builder: CaptureRequest.Builder) {
+        if (isManualFocus) {
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+            builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, manualFocusDistance)
+        } else if (currentMeteringRectangle != null) {
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+            builder.set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(currentMeteringRectangle))
+        } else {
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+        }
+
+        if (isManualExposure) {
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, manualShutterNanos)
+            builder.set(CaptureRequest.SENSOR_SENSITIVITY, manualIso)
+            if (flashMode == FlashMode.TORCH) {
+                builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
+            } else {
+                builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+            }
+        } else {
+            when (flashMode) {
+                FlashMode.OFF -> {
+                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                    builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+                }
+                FlashMode.AUTO -> {
+                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH)
+                    builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+                }
+                FlashMode.ON -> {
+                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH)
+                    builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+                }
+                FlashMode.TORCH -> {
+                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                    builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
+                }
+            }
+            val evIndex = if (evStep > 0.001f) {
+                (currentEvBias / evStep).roundToInt().coerceIn(evRange.lower, evRange.upper)
+            } else 0
+            builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIndex)
+            currentMeteringRectangle?.let {
+                builder.set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(it))
+            }
+        }
+
+        builder.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)
+        builder.set(CaptureRequest.CONTROL_AE_LOCK, isAeAwbLocked)
+        builder.set(CaptureRequest.CONTROL_AWB_LOCK, isAeAwbLocked)
+    }
+
     private fun startRepeatingPreview() {
         val session = captureSession ?: return
         val device = cameraDevice ?: return
@@ -292,19 +402,7 @@ class Camera2CaptureEngine(
         try {
             val reqBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(preview)
-                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AE_LOCK, isAeAwbLocked)
-                set(CaptureRequest.CONTROL_AWB_LOCK, isAeAwbLocked)
-
-                val evIndex = (currentEvBias / evStep).toInt().coerceIn(evRange.lower, evRange.upper)
-                set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIndex)
-
-                currentMeteringRectangle?.let {
-                    set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(it))
-                    set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(it))
-                }
+                applyPreviewSettings(this)
             }
 
             session.setRepeatingRequest(reqBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
@@ -322,7 +420,7 @@ class Camera2CaptureEngine(
                     lastTelemetry = CaptureSaver.Telemetry(iso = iso ?: 0, expTimeFormatted = expTimeFormatted)
                 }
             }, cameraHandler)
-            Log.i(TAG, "Repeating preview stream started (CONTINUOUS_PICTURE, AE_ON, ANTIBANDING_AUTO)")
+            Log.i(TAG, "Repeating preview stream started (Flash=$flashMode, ManualExp=$isManualExposure, ManualFocus=$isManualFocus)")
         } catch (e: Exception) {
             Log.e(TAG, "Error starting repeating preview: ${e.message}", e)
         }
@@ -334,73 +432,31 @@ class Camera2CaptureEngine(
         Log.i(TAG, "Exposure & AWB lock applied: $locked")
     }
 
+    fun setFlashMode(mode: FlashMode) {
+        flashMode = mode
+        startRepeatingPreview()
+        Log.i(TAG, "Flash mode updated: $mode")
+    }
+
+    fun setManualFocus(enabled: Boolean, distanceDiopters: Float = 0.0f) {
+        isManualFocus = enabled
+        manualFocusDistance = distanceDiopters
+        startRepeatingPreview()
+        Log.i(TAG, "Manual focus updated: enabled=$enabled, distance=$distanceDiopters")
+    }
+
     fun setExposureCompensation(ev: Float) {
         currentEvBias = ev
-        val session = captureSession ?: return
-        val device = cameraDevice ?: return
-        val preview = previewSurface ?: return
-
-        try {
-            val reqBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(preview)
-                set(CaptureRequest.CONTROL_AF_MODE, if (currentMeteringRectangle != null) CaptureRequest.CONTROL_AF_MODE_AUTO else CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AE_LOCK, isAeAwbLocked)
-                set(CaptureRequest.CONTROL_AWB_LOCK, isAeAwbLocked)
-
-                val evIndex = if (evStep > 0.001f) {
-                    (currentEvBias / evStep).roundToInt().coerceIn(evRange.lower, evRange.upper)
-                } else 0
-                set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIndex)
-
-                currentMeteringRectangle?.let {
-                    set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(it))
-                    set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(it))
-                }
-            }
-            session.setRepeatingRequest(reqBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
-                override fun onCaptureCompleted(
-                    session: CameraCaptureSession,
-                    request: CaptureRequest,
-                    result: TotalCaptureResult
-                ) {
-                    super.onCaptureCompleted(session, request, result)
-                    latestCaptureResult.set(result)
-                    val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
-                    val expTime = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
-                    val expTimeFormatted = if (expTime != null && expTime > 0) "1/${(1_000_000_000.0 / expTime).toInt()}s" else "N/A"
-                    lastTelemetry = CaptureSaver.Telemetry(iso = iso ?: 0, expTimeFormatted = expTimeFormatted)
-                }
-            }, cameraHandler)
-            Log.i(TAG, "EV Bias updated: ev=$ev, step=$evStep -> index=${if (evStep > 0.001f) (currentEvBias / evStep).roundToInt() else 0}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to update exposure compensation", e)
-        }
+        startRepeatingPreview()
+        Log.i(TAG, "EV Bias updated: ev=$ev, step=$evStep -> index=${if (evStep > 0.001f) (currentEvBias / evStep).roundToInt() else 0}")
     }
 
     fun setManualExposure(enabled: Boolean, shutterSpeedNanos: Long = 500_000_000L, iso: Int = 50) {
         isManualExposure = enabled
-        val session = captureSession ?: return
-        val device = cameraDevice ?: return
-        val preview = previewSurface ?: return
-
-        try {
-            val reqBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(preview)
-                if (enabled) {
-                    set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-                    set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterSpeedNanos)
-                    set(CaptureRequest.SENSOR_SENSITIVITY, iso)
-                } else {
-                    set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                }
-            }
-            session.setRepeatingRequest(reqBuilder.build(), null, cameraHandler)
-            Log.i(TAG, "Manual exposure mode updated: enabled=$enabled, t=${shutterSpeedNanos}ns, iso=$iso")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to apply manual exposure", e)
-        }
+        manualShutterNanos = shutterSpeedNanos
+        manualIso = iso
+        startRepeatingPreview()
+        Log.i(TAG, "Manual exposure mode updated: enabled=$enabled, t=${shutterSpeedNanos}ns, iso=$iso")
     }
 
     fun triggerTapToFocus(xNorm: Float, yNorm: Float) {
@@ -481,16 +537,22 @@ class Camera2CaptureEngine(
         }
     }
 
+    @Volatile
+    var isRawCaptureEnabled: Boolean = false
+
     /**
      * Captures a single still from the reader (YUV or JPEG) and converts to upright Bitmap.
+     * If RAW stream is enabled, simultaneously captures a RAW_SENSOR DNG frame.
      */
     fun captureSingleStill(
         isLegacyJpeg: Boolean,
-        onBitmapCaptured: (Bitmap?) -> Unit
+        onBitmapCaptured: (Bitmap?) -> Unit,
+        onRawCaptured: ((Image, TotalCaptureResult) -> Unit)? = null
     ) {
         val session = captureSession ?: run { onBitmapCaptured(null); return }
         val device = cameraDevice ?: run { onBitmapCaptured(null); return }
         val reader = if (isLegacyJpeg) captureJpegReader else captureYuvReader
+        val rawReader = if (isRawCaptureEnabled && isRawSupported) captureRawReader else null
 
         if (reader == null) {
             Log.e(TAG, "captureSingleStill: Target reader is null!")
@@ -531,11 +593,49 @@ class Camera2CaptureEngine(
                 }
             }, cameraHandler)
 
+            // Setup RAW reader listener if active
+            var capturedRawImage: Image? = null
+            var capturedTotalResult: TotalCaptureResult? = null
+            val rawLock = Any()
+
+            val tryDispatchRaw = {
+                var imgToDispatch: Image? = null
+                var resToDispatch: TotalCaptureResult? = null
+                synchronized(rawLock) {
+                    if (capturedRawImage != null && capturedTotalResult != null) {
+                        imgToDispatch = capturedRawImage
+                        resToDispatch = capturedTotalResult
+                        capturedRawImage = null
+                        capturedTotalResult = null
+                    }
+                }
+                if (imgToDispatch != null && resToDispatch != null) {
+                    onRawCaptured?.invoke(imgToDispatch!!, resToDispatch!!)
+                }
+            }
+
+            if (rawReader != null && onRawCaptured != null) {
+                rawReader.setOnImageAvailableListener({ ir ->
+                    val img = try {
+                        ir.acquireNextImage()
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (img != null) {
+                        rawReader.setOnImageAvailableListener(null, null)
+                        synchronized(rawLock) {
+                            capturedRawImage = img
+                        }
+                        tryDispatchRaw()
+                    }
+                }, cameraHandler)
+            }
+
             try {
                 val stillBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                     addTarget(reader.surface)
-                    set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                    set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                    rawReader?.let { addTarget(it.surface) }
+                    applyPreviewSettings(this)
                     set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
                     set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
                     set(CaptureRequest.JPEG_QUALITY, 95.toByte())
@@ -552,6 +652,13 @@ class Camera2CaptureEngine(
                         val expTimeFormatted = if (expTime != null && expTime > 0) "1/${(1_000_000_000.0 / expTime).toInt()}s" else "N/A"
                         lastTelemetry = CaptureSaver.Telemetry(iso = iso ?: 0, expTimeFormatted = expTimeFormatted)
                         Log.i(TAG, "STILL CAPTURE SENSOR METRICS: ISO=$iso, ExpTime=${expTime}ns ($expTimeFormatted)")
+
+                        if (rawReader != null && onRawCaptured != null) {
+                            synchronized(rawLock) {
+                                capturedTotalResult = result
+                            }
+                            tryDispatchRaw()
+                        }
                     }
                 }, cameraHandler)
             } catch (e: Exception) {
