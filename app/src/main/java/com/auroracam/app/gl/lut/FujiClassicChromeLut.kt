@@ -1,101 +1,64 @@
 package com.auroracam.app.gl.lut
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.pow
 
 /**
  * Procedural LUT: "Fujifilm Classic Chrome"
- * Documentary film aesthetic, muted pastel colors, hard documentary contrast toe (x^1.22),
- * distinctive blue-to-cyan/teal sky shift, deep rich warm reds, and desaturated greens/yellows.
- *
- * Core Math:
- * - Hard shadow toe curve: x^1.22
- * - Sky blue shift to cyan/teal: g += 0.14 * blueDominance, r -= 0.06 * blueDominance
- * - Subdued global saturation (0.78x) with retained red luminance depth
- * - Earthy warm midtones
+ * Baked using perceptually uniform OKLch color space:
+ * - Hard documentary contrast toe on lightness (L^1.18 with highlight retention)
+ * - Derivative-continuous Color Chrome red density (deep velvety reds without seam kinks)
+ * - Signature sky blue -> cyan/teal shift (hue angle rotation around 235°)
+ * - Subdued, earthy olive foliage and muted global chroma (0.78x)
  */
 object FujiClassicChromeLut {
     const val LUT_NAME = "Classic Chrome"
     const val DEFAULT_SIZE = 33
 
-    private fun clamp01(v: Float): Float = v.coerceIn(0f, 1f)
-
-    private fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
-        val t = clamp01((x - edge0) / (edge1 - edge0))
-        return t * t * (3.0f - 2.0f * t)
-    }
-
     fun generate(size: Int = DEFAULT_SIZE): ParsedCube {
-        val totalEntries = size * size * size
-        val buffer = ByteBuffer.allocateDirect(totalEntries * 4).order(ByteOrder.nativeOrder())
-        val step = 1.0f / (size - 1).toFloat()
+        return OklabColor.bakeOklchLut(size) { lch, _, _, _ ->
+            var l = lch.l
+            var c = lch.c
+            var h = lch.h
 
-        for (b in 0 until size) {
-            for (g in 0 until size) {
-                for (r in 0 until size) {
-                    val r0 = r * step
-                    val g0 = g * step
-                    val b0 = b * step
+            // 1. Hard Documentary Contrast Toe
+            val toeL = l.pow(1.18f)
+            l = toeL * 0.65f + OklabColor.smoothstep(0f, 1f, l) * 0.35f
 
-                    // Input Rec.709 Luminance
-                    val l0 = 0.2126f * r0 + 0.7152f * g0 + 0.0722f * b0
-
-                    // 1) Hard Documentary Contrast Toe (x^1.22 power curve on lower/mid levels)
-                    var cr = r0.pow(1.22f)
-                    var cg = g0.pow(1.22f)
-                    var cb = b0.pow(1.22f)
-
-                    // S-curve blend for highlight retention
-                    cr = cr * 0.65f + smoothstep(0f, 1f, r0) * 0.35f
-                    cg = cg * 0.65f + smoothstep(0f, 1f, g0) * 0.35f
-                    cb = cb * 0.65f + smoothstep(0f, 1f, b0) * 0.35f
-
-                    // 2) Distinctive Classic Chrome Sky Shift (Deep Blue -> Cyan/Teal)
-                    if (b0 > g0 && b0 > 0.15f) {
-                        val blueDominance = ((b0 - max(r0, g0)) / b0).coerceIn(0f, 1f) * smoothstep(0.15f, 0.9f, b0)
-                        cg += 0.14f * blueDominance
-                        cr -= 0.06f * blueDominance
-                    }
-
-                    // 3) Earthy Warm Reds & Desaturated Greens
-                    if (r0 > g0 && r0 > b0) {
-                        // Deep rich warm red
-                        cr += 0.03f * smoothstep(0.2f, 0.8f, r0)
-                    } else if (g0 > r0 && g0 > b0) {
-                        // Olive/desaturated green
-                        cr += 0.025f * (g0 - r0)
-                        cg -= 0.030f * (g0 - r0)
-                    }
-
-                    // 4) Subdued Global Documentary Saturation (0.78x chroma)
-                    val l1 = 0.2126f * cr + 0.7152f * cg + 0.0722f * cb
-                    cr = l1 + (cr - l1) * 0.78f
-                    cg = l1 + (cg - l1) * 0.78f
-                    cb = l1 + (cb - l1) * 0.78f
-
-                    // 5) Subtle Warm Shadow Tint
-                    val shadowZone = 1.0f - smoothstep(0.0f, 0.35f, l0)
-                    cr += 0.012f * shadowZone
-                    cb -= 0.010f * shadowZone
-
-                    // Clamp & store RGBA8888
-                    buffer.put((clamp01(cr) * 255f + 0.5f).toInt().toByte())
-                    buffer.put((clamp01(cg) * 255f + 0.5f).toInt().toByte())
-                    buffer.put((clamp01(cb) * 255f + 0.5f).toInt().toByte())
-                    buffer.put(255.toByte())
-                }
+            // 2. Continuous-Derivative "Color Chrome" Red Density
+            val redWeight = OklabColor.redDensityWeight(h, widthDeg = 55f)
+            if (redWeight > 0f) {
+                val chromaFactor = (c / 0.15f).coerceIn(0f, 1f)
+                l -= 0.045f * redWeight * chromaFactor
+                c *= (1.0f + 0.14f * redWeight)
             }
-        }
-        buffer.rewind()
 
-        return ParsedCube(
-            size = size,
-            data = buffer,
-            domainMin = floatArrayOf(0f, 0f, 0f),
-            domainMax = floatArrayOf(1f, 1f, 1f)
-        )
+            // 3. Classic Chrome Sky Shift (Deep Blue -> Cyan/Teal)
+            val skyWeight = OklabColor.hueBellWeight(h, centerHue = 235f, widthDeg = 40f)
+            if (skyWeight > 0f) {
+                h -= 22f * skyWeight
+            }
+
+            // 4. Earthy Olive Green & Desaturated Foliage
+            val greenWeight = OklabColor.hueBellWeight(h, centerHue = 135f, widthDeg = 35f)
+            if (greenWeight > 0f) {
+                h -= 18f * greenWeight
+                c *= (1.0f - 0.25f * greenWeight)
+            }
+
+            // 5. Subdued Global Documentary Saturation
+            c *= 0.78f
+
+            // 6. Subtle Warm Shadow Tint
+            val shadowZone = 1.0f - OklabColor.smoothstep(0.0f, 0.35f, l)
+            if (shadowZone > 0f) {
+                l += 0.008f * shadowZone
+            }
+
+            Oklch(
+                l = l.coerceIn(0f, 1f),
+                c = c.coerceAtLeast(0f),
+                h = (h % 360f + 360f) % 360f
+            )
+        }
     }
 }

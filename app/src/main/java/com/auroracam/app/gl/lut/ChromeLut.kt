@@ -1,76 +1,45 @@
 package com.auroracam.app.gl.lut
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import kotlin.math.max
-import kotlin.math.min
-
 /**
  * Procedural LUT: "Chrome"
- * High-vibrancy, punchy positive reversal film look.
- * Deep contrast S-curve with deep toe, +18% saturation boost, cool-toned shadows, and crisp highlights.
+ * Positive reversal film look baked in OKLch:
+ * - High micro-contrast S-curve with deep toe
+ * - Vibrant color purity boost (+18% chroma)
+ * - Cool-toned shadow floor and crisp highlight pop
  */
 object ChromeLut {
     const val LUT_NAME = "Chrome"
     const val DEFAULT_SIZE = 33
 
-    private fun clamp01(v: Float): Float = v.coerceIn(0f, 1f)
-
-    private fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
-        val t = clamp01((x - edge0) / (edge1 - edge0))
-        return t * t * (3.0f - 2.0f * t)
-    }
-
     fun generate(size: Int = DEFAULT_SIZE): ParsedCube {
-        val totalEntries = size * size * size
-        val buffer = ByteBuffer.allocateDirect(totalEntries * 4).order(ByteOrder.nativeOrder())
-        val step = 1.0f / (size - 1).toFloat()
+        return OklabColor.bakeOklchLut(size) { lch, _, _, _ ->
+            var l = lch.l
+            var c = lch.c
+            var h = lch.h
 
-        for (b in 0 until size) {
-            for (g in 0 until size) {
-                for (r in 0 until size) {
-                    val r0 = r * step
-                    val g0 = g * step
-                    val b0 = b * step
+            // 1. High-contrast punchy S-curve
+            l = OklabColor.smoothstep(-0.04f, 1.04f, l)
 
-                    // Input luminance
-                    val l = 0.2126f * r0 + 0.7152f * g0 + 0.0722f * b0
+            // 2. Vibrant Reversal Film Chroma (+18%)
+            c *= 1.18f
 
-                    // 1) Punchy S-curve with deeper contrast toe
-                    var cr = smoothstep(-0.05f, 1.05f, r0)
-                    var cg = smoothstep(-0.05f, 1.05f, g0)
-                    var cb = smoothstep(-0.05f, 1.05f, b0)
-
-                    // 2) Saturation boost (+18%)
-                    val newL = 0.2126f * cr + 0.7152f * cg + 0.0722f * cb
-                    cr = newL + (cr - newL) * 1.18f
-                    cg = newL + (cg - newL) * 1.18f
-                    cb = newL + (cb - newL) * 1.18f
-
-                    // 3) Cool shadow tone (-5% warm / +5% blue lift in deep shadows)
-                    val shadowZone = (1.0f - smoothstep(0.0f, 0.40f, l))
-                    cb += 0.050f * shadowZone
-                    cr -= 0.030f * shadowZone
-
-                    // 4) Clean highlight pop
-                    val highZone = smoothstep(0.70f, 1.0f, l)
-                    cr += 0.020f * highZone
-                    cg += 0.015f * highZone
-
-                    buffer.put((clamp01(cr) * 255f + 0.5f).toInt().toByte())
-                    buffer.put((clamp01(cg) * 255f + 0.5f).toInt().toByte())
-                    buffer.put((clamp01(cb) * 255f + 0.5f).toInt().toByte())
-                    buffer.put(255.toByte())
-                }
+            // 3. Cool Shadow Tone (Shift shadows towards 230° in OKLch)
+            val shadowZone = 1.0f - OklabColor.smoothstep(0.0f, 0.38f, l)
+            if (shadowZone > 0f) {
+                h += (230f - h) * 0.14f * shadowZone
             }
-        }
-        buffer.rewind()
 
-        return ParsedCube(
-            size = size,
-            data = buffer,
-            domainMin = floatArrayOf(0f, 0f, 0f),
-            domainMax = floatArrayOf(1f, 1f, 1f)
-        )
+            // 4. Highlight crispness pop
+            if (l > 0.70f) {
+                val highZone = (l - 0.70f) / 0.30f
+                l += 0.015f * highZone
+            }
+
+            Oklch(
+                l = l.coerceIn(0f, 1f),
+                c = c.coerceAtLeast(0f),
+                h = (h % 360f + 360f) % 360f
+            )
+        }
     }
 }

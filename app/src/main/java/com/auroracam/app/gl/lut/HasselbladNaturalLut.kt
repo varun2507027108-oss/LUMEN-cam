@@ -1,97 +1,55 @@
 package com.auroracam.app.gl.lut
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.pow
-
 /**
  * Procedural LUT: "Hasselblad Natural Color Solution" (HNCS)
- * Medium-format fidelity, true-to-life skin tones, extended highlight roll-off,
- * and clean, uncrushed neutral-cool shadows.
- *
- * Core Math:
- * - Linearized Rec.709 luminance response
- * - Rational asymptotic highlight shoulder (x > 0.55)
- * - Restrained global chroma (0.94x) preserving high-fidelity skin tones
- * - Subdued, clean neutral-cool shadow floor
+ * Baked using perceptually uniform OKLch color space:
+ * - Medium-format tonal fidelity with rational asymptotic highlight shoulder (L > 0.55)
+ * - True-to-life skin tone hue stability (centered at 48° in OKLch)
+ * - Restrained global chroma (0.94x) preserving organic texture and depth
+ * - Clean neutral-cool shadow floor preserving deep shadow separation
  */
 object HasselbladNaturalLut {
     const val LUT_NAME = "Hasselblad"
     const val DEFAULT_SIZE = 33
 
-    private fun clamp01(v: Float): Float = v.coerceIn(0f, 1f)
-
-    private fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
-        val t = clamp01((x - edge0) / (edge1 - edge0))
-        return t * t * (3.0f - 2.0f * t)
-    }
-
     fun generate(size: Int = DEFAULT_SIZE): ParsedCube {
-        val totalEntries = size * size * size
-        val buffer = ByteBuffer.allocateDirect(totalEntries * 4).order(ByteOrder.nativeOrder())
-        val step = 1.0f / (size - 1).toFloat()
+        return OklabColor.bakeOklchLut(size) { lch, _, _, _ ->
+            var l = lch.l
+            var c = lch.c
+            var h = lch.h
 
-        for (b in 0 until size) {
-            for (g in 0 until size) {
-                for (r in 0 until size) {
-                    val r0 = r * step
-                    val g0 = g * step
-                    val b0 = b * step
+            // 1. Natural Medium-Format Tone Curve (subtle contrast with linear midtones)
+            l = l * 0.75f + OklabColor.smoothstep(0f, 1f, l) * 0.25f
 
-                    // Input Rec.709 Luminance
-                    val l0 = 0.2126f * r0 + 0.7152f * g0 + 0.0722f * b0
-
-                    // 1) Natural Medium-Format Tone Curve (subtle contrast with smooth linear midtones)
-                    var cr = r0 * 0.70f + smoothstep(0f, 1f, r0) * 0.30f
-                    var cg = g0 * 0.70f + smoothstep(0f, 1f, g0) * 0.30f
-                    var cb = b0 * 0.70f + smoothstep(0f, 1f, b0) * 0.30f
-
-                    // 2) Rational Asymptotic Highlight Shoulder (x > 0.55) for smooth roll-off
-                    if (l0 > 0.55f) {
-                        val shoulderT = (l0 - 0.55f) / 0.45f
-                        val shoulderComp = shoulderT / (1.0f + 0.35f * shoulderT)
-                        val highFactor = 1.0f - shoulderComp * 0.06f
-                        cr *= highFactor
-                        cg *= highFactor
-                        cb *= highFactor
-                    }
-
-                    // 3) Restrained Global Chroma (0.94x) — eliminates artificial neon saturation
-                    val l1 = 0.2126f * cr + 0.7152f * cg + 0.0722f * cb
-                    cr = l1 + (cr - l1) * 0.94f
-                    cg = l1 + (cg - l1) * 0.94f
-                    cb = l1 + (cb - l1) * 0.94f
-
-                    // 4) Natural Skin Tone Harmonization (Warm yellow-red melanin alignment)
-                    if (r0 > g0 && g0 > b0) {
-                        val skinFactor = ((r0 - g0) * (g0 - b0)).coerceAtLeast(0f) * 4.0f
-                        cr += 0.015f * skinFactor
-                        cg += 0.008f * skinFactor
-                        cb -= 0.010f * skinFactor
-                    }
-
-                    // 5) Clean Neutral-Cool Shadow Floor (preserves deep shadow separation)
-                    val shadowZone = 1.0f - smoothstep(0.0f, 0.35f, l0)
-                    cb += 0.015f * shadowZone
-                    cr -= 0.008f * shadowZone
-
-                    // Clamp & store RGBA8888
-                    buffer.put((clamp01(cr) * 255f + 0.5f).toInt().toByte())
-                    buffer.put((clamp01(cg) * 255f + 0.5f).toInt().toByte())
-                    buffer.put((clamp01(cb) * 255f + 0.5f).toInt().toByte())
-                    buffer.put(255.toByte())
-                }
+            // 2. Rational Asymptotic Highlight Shoulder (L > 0.55) for smooth roll-off
+            if (l > 0.55f) {
+                val shoulderT = (l - 0.55f) / 0.45f
+                val shoulderComp = shoulderT / (1.0f + 0.35f * shoulderT)
+                l -= shoulderComp * 0.045f
             }
-        }
-        buffer.rewind()
 
-        return ParsedCube(
-            size = size,
-            data = buffer,
-            domainMin = floatArrayOf(0f, 0f, 0f),
-            domainMax = floatArrayOf(1f, 1f, 1f)
-        )
+            // 3. Natural Skin Tone Harmonization (HNCS Melanin Alignment)
+            val skinWeight = OklabColor.hueBellWeight(h, centerHue = 48f, widthDeg = 25f)
+            if (skinWeight > 0f) {
+                h += (48f - h) * 0.15f * skinWeight
+                c *= (1.0f + 0.04f * skinWeight)
+            }
+
+            // 4. Restrained Global Chroma for Medium-Format Organic Purity
+            c *= 0.94f
+
+            // 5. Clean Neutral-Cool Shadow Floor
+            val shadowZone = 1.0f - OklabColor.smoothstep(0.0f, 0.30f, l)
+            if (shadowZone > 0f) {
+                // Subtle cool tint in deep shadows (shift towards 240°)
+                h += (240f - h) * 0.06f * shadowZone
+            }
+
+            Oklch(
+                l = l.coerceIn(0f, 1f),
+                c = c.coerceAtLeast(0f),
+                h = (h % 360f + 360f) % 360f
+            )
+        }
     }
 }
