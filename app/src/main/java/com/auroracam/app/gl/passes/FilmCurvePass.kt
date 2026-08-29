@@ -113,10 +113,13 @@ void main() {
         c = 1.0 - (1.0 - c) * (1.0 - halation);
     }
 
-    // 4. Analog Film Grain
+    // 4. Analog Film Grain (2-Tap Multi-Scale Clumping)
     float l = dot(c, W);
-    float n = hash(vUv * uGrainScale + vec2(fract(uTime * 0.731) * 91.7, fract(uTime * 0.517) * 57.3));
-    c += (n - 0.5) * uGrain * 4.0 * l * (1.0 - l);
+    vec2 jitterOffset = vec2(fract(uTime * 0.731) * 91.7, fract(uTime * 0.517) * 57.3);
+    float nFine = hash(vUv * uGrainScale + jitterOffset);
+    float nCoarse = hash(vUv * uGrainScale * 0.4 + jitterOffset);
+    float n = mix(nFine, nCoarse, 0.35);
+    c += (n - 0.5) * uGrain * 2.2 * l * (1.0 - l);
 
     // 5. Optical Vignette
     float d = distance(vUv, vec2(0.5));

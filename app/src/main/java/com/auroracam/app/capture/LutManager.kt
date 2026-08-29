@@ -53,16 +53,16 @@ class LutManager(private val context: Context) {
         )
 
         val DEFAULT_LOOK_UNIFORMS: Map<String, LookUniforms> = mapOf(
-            HasselbladNaturalLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.00f, grain = 0.015f, vignette = 0.08f, chromaticAberration = 0.00f, halationThreshold = 0.75f),
-            LeicaCharacterLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.28f, grain = 0.045f, vignette = 0.18f, chromaticAberration = 0.04f, halationThreshold = 0.58f),
-            FujiClassicChromeLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.12f, grain = 0.050f, vignette = 0.14f, chromaticAberration = 0.00f, halationThreshold = 0.72f),
-            KodakPortra400Lut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.22f, grain = 0.065f, vignette = 0.12f, chromaticAberration = 0.02f, halationThreshold = 0.70f),
-            AuroraWarmLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.25f, grain = 0.040f, vignette = 0.12f, chromaticAberration = 0.00f, halationThreshold = 0.70f),
-            ChromeLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.10f, grain = 0.035f, vignette = 0.22f, chromaticAberration = 0.03f, halationThreshold = 0.75f),
-            MonoLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.16f, grain = 0.085f, vignette = 0.24f, chromaticAberration = 0.00f, halationThreshold = 0.75f)
+            HasselbladNaturalLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.00f, grain = 0.010f, vignette = 0.08f, chromaticAberration = 0.00f, halationThreshold = 0.75f),
+            LeicaCharacterLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.28f, grain = 0.030f, vignette = 0.18f, chromaticAberration = 0.04f, halationThreshold = 0.58f),
+            FujiClassicChromeLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.12f, grain = 0.035f, vignette = 0.14f, chromaticAberration = 0.00f, halationThreshold = 0.72f),
+            KodakPortra400Lut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.22f, grain = 0.040f, vignette = 0.12f, chromaticAberration = 0.02f, halationThreshold = 0.70f),
+            AuroraWarmLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.25f, grain = 0.030f, vignette = 0.12f, chromaticAberration = 0.00f, halationThreshold = 0.70f),
+            ChromeLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.10f, grain = 0.025f, vignette = 0.22f, chromaticAberration = 0.03f, halationThreshold = 0.75f),
+            MonoLut.LUT_NAME to LookUniforms(intensity = 1.0f, halation = 0.16f, grain = 0.050f, vignette = 0.24f, chromaticAberration = 0.00f, halationThreshold = 0.75f)
         )
 
-        val DEFAULT_CUSTOM_UNIFORMS = LookUniforms(intensity = 1.0f, halation = 0.15f, grain = 0.035f, vignette = 0.10f, chromaticAberration = 0.00f, halationThreshold = 0.75f)
+        val DEFAULT_CUSTOM_UNIFORMS = LookUniforms(intensity = 1.0f, halation = 0.15f, grain = 0.030f, vignette = 0.10f, chromaticAberration = 0.00f, halationThreshold = 0.75f)
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
