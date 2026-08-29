@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -24,19 +25,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BlurOn
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.Flare
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -49,7 +45,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -64,31 +59,37 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.auroracam.app.ui.theme.AmberGold
+import com.auroracam.app.ui.theme.DarkBackground
+import com.auroracam.app.ui.theme.ElevatedSurface
+import com.auroracam.app.ui.theme.SlateBorder
+import com.auroracam.app.ui.theme.TextSecondary
+import com.auroracam.app.ui.theme.White
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 enum class WheelParameter(
     val title: String,
     val unit: String,
     val defaultValue: Float,
-    val icon: ImageVector
+    val icon: ImageVector,
+    val accentColor: Color
 ) {
-    ECHO_DECAY("Echo Decay", "%", 0.75f, Icons.Default.History),
-    MOTION_THRESHOLD("Motion Thresh", "", 0.08f, Icons.AutoMirrored.Filled.DirectionsRun),
-    LIGHT_DECAY("Light Decay", "%", 0.94f, Icons.Default.Flare),
-    CHROMATIC_ABERRATION("Aberration", "%", 0.35f, Icons.Default.BlurOn),
-    LOOK_INTENSITY("Look Mix", "%", 1.0f, Icons.Default.ColorLens),
-    HALATION_GLOW("Glow", "%", 0.20f, Icons.Default.WbSunny)
+    ECHO_DECAY("Echo Decay", "%", 0.75f, Icons.Default.History, com.auroracam.app.ui.theme.LookNostalgia),
+    MOTION_THRESHOLD("Motion Thresh", "", 0.08f, Icons.AutoMirrored.Filled.DirectionsRun, com.auroracam.app.ui.theme.FocusMint),
+    LIGHT_DECAY("Light Decay", "%", 0.94f, Icons.Default.Flare, com.auroracam.app.ui.theme.SolarGold),
+    CHROMATIC_ABERRATION("Aberration", "%", 0.35f, Icons.Default.BlurOn, com.auroracam.app.ui.theme.OpticCyan),
+    LOOK_INTENSITY("Look Mix", "%", 1.0f, Icons.Default.ColorLens, com.auroracam.app.ui.theme.LookWarmth),
+    HALATION_GLOW("Glow", "%", 0.20f, Icons.Default.WbSunny, com.auroracam.app.ui.theme.SolarOrange)
 }
 
 /**
- * Cinema-Grade Rotary Parameter Wheel UI.
+ * Minimalist Cinema Rotary Parameter Wheel UI.
  *
- * Provides a tactile, circular rotary dial to fine-tune GPU effect parameters
+ * Provides a tactile circular dial to fine-tune GPU effect parameters
  * with normalized relative angular delta tracking (preventing 359° -> 1° wraparound jumps),
  * radial sensitivity scaling, double-tap reset, and haptic feedback.
  */
@@ -100,8 +101,6 @@ fun ParameterWheel(
     onSelectParam: (WheelParameter) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val goldAccent = Color(0xFFFFD54F)
-    val cyanAccent = Color(0xFF00E5FF)
     val density = LocalDensity.current
     val view = LocalView.current
 
@@ -109,18 +108,17 @@ fun ParameterWheel(
     var lastAngleRad by remember { mutableDoubleStateOf(0.0) }
     var lastHapticStep by remember { mutableIntStateOf(0) }
 
-    val activeColor = when (currentParam) {
-        WheelParameter.ECHO_DECAY, WheelParameter.MOTION_THRESHOLD -> cyanAccent
-        WheelParameter.LIGHT_DECAY, WheelParameter.HALATION_GLOW -> goldAccent
-        WheelParameter.CHROMATIC_ABERRATION -> Color(0xFFFF4081)
-        WheelParameter.LOOK_INTENSITY -> Color(0xFF69F0AE)
-    }
+    val activeColor = currentParam.accentColor
+
+    val latestParamValue by androidx.compose.runtime.rememberUpdatedState(paramValue)
+    val latestOnParamChanged by androidx.compose.runtime.rememberUpdatedState(onParamChanged)
+    var activeNorm by remember { mutableFloatStateOf(0.5f) }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
         // Quick Parameter Selector Pills
         LazyRow(
@@ -140,31 +138,38 @@ fun ParameterWheel(
                             imageVector = param.icon,
                             contentDescription = param.title,
                             modifier = Modifier.size(12.dp),
-                            tint = if (isSelected) Color.Black else Color.White.copy(alpha = 0.7f)
+                            tint = if (isSelected) DarkBackground else White.copy(alpha = 0.7f)
                         )
                     },
                     label = {
                         Text(
                             text = param.title,
                             fontSize = 10.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontFamily = FontFamily.Monospace
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = activeColor,
-                        selectedLabelColor = Color.Black,
-                        containerColor = Color(0x33222222),
-                        labelColor = Color.White
+                        selectedContainerColor = param.accentColor,
+                        selectedLabelColor = DarkBackground,
+                        containerColor = ElevatedSurface,
+                        labelColor = White
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isSelected,
+                        borderColor = SlateBorder,
+                        selectedBorderColor = param.accentColor
                     ),
                     modifier = Modifier.height(28.dp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Circular Rotary Wheel
-        val wheelSize = 126.dp
+        val wheelSize = 130.dp
         val wheelRadiusPx = with(density) { (wheelSize / 2).toPx() }
 
         Box(
@@ -175,13 +180,13 @@ fun ParameterWheel(
                 .pointerInput(currentParam) {
                     detectTapGestures(
                         onDoubleTap = {
-                            onParamChanged(currentParam, currentParam.defaultValue)
+                            latestOnParamChanged(currentParam, currentParam.defaultValue)
                             view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         }
                     )
                 }
                 // Continuous delta drag
-                .pointerInput(currentParam, paramValue) {
+                .pointerInput(currentParam) {
                     detectDragGestures(
                         onDragStart = { offset ->
                             isDragging = true
@@ -189,10 +194,16 @@ fun ParameterWheel(
                             val touchX = offset.x - center.x
                             val touchY = offset.y - center.y
                             lastAngleRad = atan2(touchY.toDouble(), touchX.toDouble())
+                            activeNorm = when (currentParam) {
+                                WheelParameter.MOTION_THRESHOLD -> ((latestParamValue - 0.01f) / 0.39f).coerceIn(0.0f, 1.0f)
+                                WheelParameter.LIGHT_DECAY -> ((latestParamValue - 0.50f) / 0.49f).coerceIn(0.0f, 1.0f)
+                                else -> latestParamValue.coerceIn(0.0f, 1.0f)
+                            }
                         },
                         onDragEnd = { isDragging = false },
                         onDragCancel = { isDragging = false }
                     ) { change, _ ->
+                        change.consume()
                         val center = Offset(wheelRadiusPx, wheelRadiusPx)
                         val touchX = change.position.x - center.x
                         val touchY = change.position.y - center.y
@@ -205,37 +216,25 @@ fun ParameterWheel(
                         if (deltaAngle < -PI) deltaAngle += 2 * PI
                         lastAngleRad = curAngleRad
 
-                        // Radial sensitivity scaling: finer control near center (0.4x), normal at outer rim (1.0x)
-                        val dist = sqrt(touchX * touchX + touchY * touchY)
-                        val radiusNorm = (dist / wheelRadiusPx).coerceIn(0.25f, 1.25f)
-                        val sensitivity = (radiusNorm * 0.85f).coerceIn(0.35f, 1.0f)
-
-                        // Convert current parameter value to 0..1 normalized domain
-                        val currentNorm = when (currentParam) {
-                            WheelParameter.MOTION_THRESHOLD -> ((paramValue - 0.01f) / 0.39f).coerceIn(0.0f, 1.0f)
-                            WheelParameter.LIGHT_DECAY -> ((paramValue - 0.50f) / 0.49f).coerceIn(0.0f, 1.0f)
-                            else -> paramValue.coerceIn(0.0f, 1.0f)
-                        }
-
-                        // Delta addition
-                        val deltaNorm = (deltaAngle / (2 * PI)).toFloat() * sensitivity
-                        val newNorm = (currentNorm + deltaNorm).coerceIn(0.0f, 1.0f)
+                        // Smooth rotational sensitivity (1 full 360 deg sweep = 100% parameter range)
+                        val deltaNorm = (deltaAngle / (2 * PI)).toFloat() * 1.15f
+                        activeNorm = (activeNorm + deltaNorm).coerceIn(0.0f, 1.0f)
 
                         // Convert back to parameter-specific range
                         val formattedVal = when (currentParam) {
-                            WheelParameter.MOTION_THRESHOLD -> (newNorm * 0.39f + 0.01f).coerceIn(0.01f, 0.40f)
-                            WheelParameter.LIGHT_DECAY -> (newNorm * 0.49f + 0.50f).coerceIn(0.50f, 0.99f)
-                            else -> newNorm.coerceIn(0.0f, 1.0f)
+                            WheelParameter.MOTION_THRESHOLD -> (activeNorm * 0.39f + 0.01f).coerceIn(0.01f, 0.40f)
+                            WheelParameter.LIGHT_DECAY -> (activeNorm * 0.49f + 0.50f).coerceIn(0.50f, 0.99f)
+                            else -> activeNorm.coerceIn(0.0f, 1.0f)
                         }
 
                         // Haptic feedback tick on 5% increments
-                        val step = (newNorm * 20f).toInt()
+                        val step = (activeNorm * 20f).toInt()
                         if (step != lastHapticStep) {
                             lastHapticStep = step
                             view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                         }
 
-                        onParamChanged(currentParam, formattedVal)
+                        latestOnParamChanged(currentParam, formattedVal)
                     }
                 }
         ) {
@@ -247,7 +246,7 @@ fun ParameterWheel(
 
                 // 1. Background circular track
                 drawCircle(
-                    color = Color(0x33FFFFFF),
+                    color = Color(0x22FFFFFF),
                     radius = radius,
                     center = Offset(cx, cy),
                     style = Stroke(width = strokeW)
@@ -264,7 +263,7 @@ fun ParameterWheel(
                     val p2 = Offset(cx + outerR * cos(tickAngle), cy + outerR * sin(tickAngle))
 
                     drawLine(
-                        color = if (isMajor) activeColor.copy(alpha = 0.8f) else Color(0x44FFFFFF),
+                        color = if (isMajor) activeColor.copy(alpha = 0.8f) else Color(0x33FFFFFF),
                         start = p1,
                         end = p2,
                         strokeWidth = if (isMajor) 1.75.dp.toPx() else 1.0.dp.toPx(),
@@ -323,7 +322,8 @@ fun ParameterWheel(
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(Color(0xEE111111))
+                    .background(ElevatedSurface)
+                    .border(1.dp, SlateBorder, CircleShape)
                     .size(68.dp)
                     .clickable {
                         onParamChanged(currentParam, currentParam.defaultValue)
@@ -347,8 +347,9 @@ fun ParameterWheel(
                 )
                 Text(
                     text = currentParam.title.take(8),
-                    color = Color.White.copy(alpha = 0.7f),
+                    color = TextSecondary,
                     fontSize = 8.sp,
+                    fontFamily = FontFamily.Monospace,
                     maxLines = 1
                 )
             }

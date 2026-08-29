@@ -84,23 +84,50 @@ class Camera2CaptureEngine(
     private var isProbeCompleted = false
     private var currentMeteringRectangle: MeteringRectangle? = null
 
+    private val cameraLock = Any()
+    private val isOpeningOrOpen = AtomicBoolean(false)
+
     private fun startBackgroundThread() {
-        if (cameraThread == null) {
-            cameraThread = HandlerThread("Camera2Background").apply {
-                start()
-                cameraHandler = Handler(looper)
+        synchronized(cameraLock) {
+            if (cameraThread == null) {
+                cameraThread = HandlerThread("Camera2Background").apply {
+                    start()
+                    cameraHandler = Handler(looper)
+                }
             }
         }
     }
 
     private fun stopBackgroundThread() {
-        cameraThread?.quitSafely()
-        try {
-            cameraThread?.join()
-            cameraThread = null
-            cameraHandler = null
-        } catch (e: InterruptedException) {
-            Log.e(TAG, "Error stopping camera background thread", e)
+        synchronized(cameraLock) {
+            cameraThread?.quitSafely()
+            try {
+                cameraThread?.join(500)
+                cameraThread = null
+                cameraHandler = null
+            } catch (e: InterruptedException) {
+                Log.e(TAG, "Error stopping camera background thread", e)
+            }
+        }
+    }
+
+    fun closeCamera() {
+        synchronized(cameraLock) {
+            try {
+                isOpeningOrOpen.set(false)
+                captureSession?.close()
+                captureSession = null
+                cameraDevice?.close()
+                cameraDevice = null
+                captureYuvReader?.close()
+                captureYuvReader = null
+                captureJpegReader?.close()
+                captureJpegReader = null
+                previewSurface?.release()
+                previewSurface = null
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing camera: ${e.message}")
+            }
         }
     }
 
@@ -110,81 +137,100 @@ class Camera2CaptureEngine(
         isLegacyJpeg: Boolean,
         onOpened: (() -> Unit)? = null
     ) {
-        startBackgroundThread()
-        surfaceTexture = st
+        synchronized(cameraLock) {
+            closeCamera()
+            startBackgroundThread()
+            surfaceTexture = st
 
-        val probe = CameraProbe.probeCameraCapabilities(context, cameraManager)
-        currentCameraId = probe.backCameraId
-        characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
-        maxAnalogIso = probe.maxAnalogSensitivity
-        sensorOrientation = characteristics?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+            try {
+                val probe = CameraProbe.probeCameraCapabilities(context, cameraManager)
+                currentCameraId = probe.backCameraId
+                characteristics = cameraManager.getCameraCharacteristics(currentCameraId)
+                maxAnalogIso = probe.maxAnalogSensitivity
+                sensorOrientation = characteristics?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
 
-        val targetPreviewSize = if (isPreviewHd) PREFERRED_PREVIEW_HD_SIZE else PREFERRED_PREVIEW_SIZE
-        st.setDefaultBufferSize(targetPreviewSize.width, targetPreviewSize.height)
-        Log.i(TAG, "SurfaceTexture buffer size configured to: ${targetPreviewSize.width}x${targetPreviewSize.height}")
+                val targetPreviewSize = if (isPreviewHd) PREFERRED_PREVIEW_HD_SIZE else PREFERRED_PREVIEW_SIZE
+                st.setDefaultBufferSize(targetPreviewSize.width, targetPreviewSize.height)
+                Log.i(TAG, "SurfaceTexture buffer size configured to: ${targetPreviewSize.width}x${targetPreviewSize.height}")
 
-        previewSurface?.release()
-        previewSurface = Surface(st)
+                previewSurface?.release()
+                previewSurface = Surface(st)
 
-        resolvedCaptureSize = probe.resolvedYuvSize ?: PREFERRED_CAPTURE_SIZE
-        Log.i(TAG, "Capture ImageReader configured size: ${resolvedCaptureSize.width}x${resolvedCaptureSize.height}")
+                resolvedCaptureSize = probe.resolvedYuvSize ?: PREFERRED_CAPTURE_SIZE
+                Log.i(TAG, "Capture ImageReader configured size: ${resolvedCaptureSize.width}x${resolvedCaptureSize.height}")
 
-        captureYuvReader?.close()
-        captureYuvReader = ImageReader.newInstance(
-            resolvedCaptureSize.width,
-            resolvedCaptureSize.height,
-            ImageFormat.YUV_420_888,
-            8
-        )
+                captureYuvReader?.close()
+                captureYuvReader = ImageReader.newInstance(
+                    resolvedCaptureSize.width,
+                    resolvedCaptureSize.height,
+                    ImageFormat.YUV_420_888,
+                    8
+                )
 
-        captureJpegReader?.close()
-        if (isLegacyJpeg) {
-            captureJpegReader = ImageReader.newInstance(
-                resolvedCaptureSize.width,
-                resolvedCaptureSize.height,
-                ImageFormat.JPEG,
-                2
-            )
-        }
-
-        // EV Compensation limits
-        val compRange = characteristics?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
-        if (compRange != null && compRange.upper > compRange.lower) {
-            evRange = compRange
-        } else {
-            evRange = Range(-12, 12)
-        }
-        val compStep = characteristics?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
-        if (compStep != null && compStep.denominator > 0 && compStep.numerator > 0) {
-            evStep = compStep.numerator.toFloat() / compStep.denominator.toFloat()
-        } else {
-            evStep = 1.0f / 3.0f
-        }
-        Log.i(TAG, "EV Compensation initialized: range=$evRange, step=$evStep")
-
-        try {
-            @SuppressLint("MissingPermission")
-            cameraManager.openCamera(currentCameraId, object : CameraDevice.StateCallback() {
-                override fun onOpened(device: CameraDevice) {
-                    Log.i(TAG, "CameraDevice onOpened: id=$currentCameraId")
-                    cameraDevice = device
-                    createCameraSession(onOpened)
+                captureJpegReader?.close()
+                if (isLegacyJpeg) {
+                    captureJpegReader = ImageReader.newInstance(
+                        resolvedCaptureSize.width,
+                        resolvedCaptureSize.height,
+                        ImageFormat.JPEG,
+                        2
+                    )
                 }
 
-                override fun onDisconnected(device: CameraDevice) {
-                    Log.w(TAG, "CameraDevice onDisconnected")
-                    device.close()
-                    cameraDevice = null
+                // EV Compensation limits
+                val compRange = characteristics?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+                if (compRange != null && compRange.upper > compRange.lower) {
+                    evRange = compRange
+                } else {
+                    evRange = Range(-12, 12)
                 }
+                val compStep = characteristics?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+                if (compStep != null && compStep.denominator > 0 && compStep.numerator > 0) {
+                    evStep = compStep.numerator.toFloat() / compStep.denominator.toFloat()
+                } else {
+                    evStep = 1.0f / 3.0f
+                }
+                Log.i(TAG, "EV Compensation initialized: range=$evRange, step=$evStep")
 
-                override fun onError(device: CameraDevice, error: Int) {
-                    Log.e(TAG, "CameraDevice onError: code=$error")
-                    device.close()
-                    cameraDevice = null
-                }
-            }, cameraHandler)
-        } catch (e: CameraAccessException) {
-            Log.e(TAG, "Failed to open camera: ${e.message}", e)
+                isOpeningOrOpen.set(true)
+                @SuppressLint("MissingPermission")
+                cameraManager.openCamera(currentCameraId, object : CameraDevice.StateCallback() {
+                    override fun onOpened(device: CameraDevice) {
+                        Log.i(TAG, "CameraDevice onOpened: id=$currentCameraId")
+                        synchronized(cameraLock) {
+                            if (!isOpeningOrOpen.get()) {
+                                device.close()
+                                return
+                            }
+                            cameraDevice = device
+                            createCameraSession(onOpened)
+                        }
+                    }
+
+                    override fun onDisconnected(device: CameraDevice) {
+                        Log.w(TAG, "CameraDevice onDisconnected")
+                        synchronized(cameraLock) {
+                            device.close()
+                            if (cameraDevice == device) cameraDevice = null
+                        }
+                    }
+
+                    override fun onError(device: CameraDevice, error: Int) {
+                        Log.e(TAG, "CameraDevice onError: code=$error")
+                        synchronized(cameraLock) {
+                            try {
+                                device.close()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Exception closing device in onError: ${e.message}")
+                            }
+                            if (cameraDevice == device) cameraDevice = null
+                        }
+                    }
+                }, cameraHandler)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to open camera: ${e.message}", e)
+                isOpeningOrOpen.set(false)
+            }
         }
     }
 
@@ -718,19 +764,50 @@ class Camera2CaptureEngine(
         val outBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(width * height)
 
+        val yRow = ByteArray(width)
+        val halfW = width / 2
+        val uvRowBytesCount = halfW * uvPixelStride
+        val uRowBytes = ByteArray(uvRowBytesCount)
+        val vRowBytes = ByteArray(uvRowBytesCount)
+
+        // Precalculated UV offsets per 2-pixel column
+        val rOffsets = IntArray(halfW)
+        val gOffsets = IntArray(halfW)
+        val bOffsets = IntArray(halfW)
+
         for (y in 0 until height) {
-            val yOffset = y * yRowStride
-            val uvOffset = (y / 2) * uvRowStride
+            // Read entire Y row in 1 JNI call
+            yBuf.position(y * yRowStride)
+            yBuf.get(yRow, 0, width)
+
+            // Update chroma offsets on even rows (YUV 4:2:0 subsampling)
+            if ((y and 1) == 0) {
+                val uvRowStart = (y shr 1) * uvRowStride
+                uBuf.position(uvRowStart)
+                uBuf.get(uRowBytes, 0, minOf(uvRowBytesCount, uBuf.remaining()))
+
+                vBuf.position(uvRowStart)
+                vBuf.get(vRowBytes, 0, minOf(uvRowBytesCount, vBuf.remaining()))
+
+                for (cx in 0 until halfW) {
+                    val uvIdx = cx * uvPixelStride
+                    val uVal = (uRowBytes[uvIdx].toInt() and 0xFF) - 128
+                    val vVal = (vRowBytes[uvIdx].toInt() and 0xFF) - 128
+
+                    // Fixed-point BT.601 (scaled by 1024, shr 10)
+                    rOffsets[cx] = (1436 * vVal) shr 10
+                    gOffsets[cx] = (-352 * uVal - 731 * vVal) shr 10
+                    bOffsets[cx] = (1815 * uVal) shr 10
+                }
+            }
+
             val outOffset = y * width
             for (x in 0 until width) {
-                val yVal = (yBuf.get(yOffset + x).toInt() and 0xFF)
-                val uvIdx = uvOffset + (x / 2) * uvPixelStride
-                val uVal = (uBuf.get(uvIdx).toInt() and 0xFF) - 128
-                val vVal = (vBuf.get(uvIdx).toInt() and 0xFF) - 128
-
-                val r = (yVal + 1.402f * vVal).toInt().coerceIn(0, 255)
-                val g = (yVal - 0.344136f * uVal - 0.714136f * vVal).toInt().coerceIn(0, 255)
-                val b = (yVal + 1.772f * uVal).toInt().coerceIn(0, 255)
+                val yVal = yRow[x].toInt() and 0xFF
+                val cx = x shr 1
+                val r = (yVal + rOffsets[cx]).coerceIn(0, 255)
+                val g = (yVal + gOffsets[cx]).coerceIn(0, 255)
+                val b = (yVal + bOffsets[cx]).coerceIn(0, 255)
 
                 pixels[outOffset + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
             }

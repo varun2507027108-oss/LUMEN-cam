@@ -163,13 +163,14 @@ object BurstAligner {
         val stepX = origW.toFloat() / WORKING_W.toFloat()
         val stepY = origH.toFloat() / WORKING_H.toFloat()
 
+        val srcXTable = IntArray(WORKING_W) { (it * stepX).toInt().coerceIn(0, origW - 1) }
+
         for (y in 0 until WORKING_H) {
             val srcY = (y * stepY).toInt().coerceIn(0, origH - 1)
             val srcRowOffset = srcY * origW
             val outRowOffset = y * WORKING_W
             for (x in 0 until WORKING_W) {
-                val srcX = (x * stepX).toInt().coerceIn(0, origW - 1)
-                out[outRowOffset + x] = yBuf.get(srcRowOffset + srcX)
+                out[outRowOffset + x] = yBuf.get(srcRowOffset + srcXTable[x])
             }
         }
         return out
@@ -228,16 +229,17 @@ object BurstAligner {
         for (dy in (centerDy - radius)..(centerDy + radius)) {
             for (dx in (centerDx - radius)..(centerDx + radius)) {
                 var sad = 0L
-                for (y in margin until (h - margin) step 2) {
-                    val ty = y + dy
-                    if (ty < 0 || ty >= h) continue
+                val startY = maxOf(margin, -dy)
+                val endY = minOf(h - margin, h - dy)
+                val startX = maxOf(margin, -dx)
+                val endX = minOf(w - margin, w - dx)
+
+                for (y in startY until endY step 2) {
                     val refRow = y * w
-                    val targetRow = ty * w
-                    for (x in margin until (w - margin) step 2) {
-                        val tx = x + dx
-                        if (tx < 0 || tx >= w) continue
+                    val targetRow = (y + dy) * w
+                    for (x in startX until endX step 2) {
                         val rVal = ref[refRow + x].toInt() and 0xFF
-                        val tVal = target[targetRow + tx].toInt() and 0xFF
+                        val tVal = target[targetRow + x + dx].toInt() and 0xFF
                         sad += abs(rVal - tVal)
                     }
                 }
@@ -269,19 +271,21 @@ object BurstAligner {
 
         for (rY in -radius..radius) {
             val dy = centerDy + rY
+            val startY = maxOf(margin, -dy)
+            val endY = minOf(h - margin, h - dy)
+
             for (rX in -radius..radius) {
                 val dx = centerDx + rX
+                val startX = maxOf(margin, -dx)
+                val endX = minOf(w - margin, w - dx)
+
                 var sad = 0L
-                for (y in margin until (h - margin) step 2) {
-                    val ty = y + dy
-                    if (ty < 0 || ty >= h) continue
+                for (y in startY until endY step 2) {
                     val refRow = y * w
-                    val targetRow = ty * w
-                    for (x in margin until (w - margin) step 2) {
-                        val tx = x + dx
-                        if (tx < 0 || tx >= w) continue
+                    val targetRow = (y + dy) * w
+                    for (x in startX until endX step 2) {
                         val rVal = ref[refRow + x].toInt() and 0xFF
-                        val tVal = target[targetRow + tx].toInt() and 0xFF
+                        val tVal = target[targetRow + x + dx].toInt() and 0xFF
                         sad += abs(rVal - tVal)
                     }
                 }

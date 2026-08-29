@@ -1,6 +1,7 @@
 package com.auroracam.app.ui
 
 import android.graphics.Bitmap
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -19,11 +20,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -34,27 +35,38 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.auroracam.app.ui.theme.AuroraAmber
-import com.auroracam.app.ui.theme.AuroraCyan
+import com.auroracam.app.ui.theme.AmberGold
+import com.auroracam.app.ui.theme.AmberGoldDim
 import com.auroracam.app.ui.theme.DarkBackground
 import com.auroracam.app.ui.theme.DarkSurface
+import com.auroracam.app.ui.theme.ElevatedSurface
+import com.auroracam.app.ui.theme.SlateBorder
 import com.auroracam.app.ui.theme.TextSecondary
 import com.auroracam.app.ui.theme.White
 
+/**
+ * Minimalist Cinema Shutter Bar.
+ *
+ * 1. Left: Direct Phone Gallery Launcher Thumbnail.
+ * 2. Center: Tactile Shutter Button with animated press feedback.
+ * 3. Right: Sleek Creative Drawer Toggle Button.
+ */
 @Composable
 fun CameraShutterBar(
     isCapturing: Boolean,
     lastCapturedThumbnail: Bitmap?,
+    onThumbnailClicked: () -> Unit,
     onShutterClicked: () -> Unit,
     activeLookName: String,
     isLookEnabled: Boolean,
-    onLookQuickToggle: () -> Unit,
-    statusText: String? = null,
+    cameraMode: CameraMode,
+    isDrawerOpen: Boolean,
+    onDrawerToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val view = LocalView.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
@@ -67,82 +79,94 @@ fun CameraShutterBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 2.dp),
+            .padding(horizontal = 28.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 1. Gallery Thumbnail
+        // 1. Direct Gallery Launch Thumbnail Preview
         Box(
             modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(DarkSurface)
-                .border(1.5.dp, Color(0x44FFFFFF), RoundedCornerShape(14.dp)),
+                .size(50.dp)
+                .clip(RoundedCornerShape(15.dp))
+                .background(ElevatedSurface)
+                .border(
+                    1.5.dp,
+                    if (lastCapturedThumbnail != null) AmberGold else SlateBorder,
+                    RoundedCornerShape(15.dp)
+                )
+                .clickable {
+                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    onThumbnailClicked()
+                },
             contentAlignment = Alignment.Center
         ) {
             if (lastCapturedThumbnail != null) {
                 Image(
                     bitmap = lastCapturedThumbnail.asImageBitmap(),
-                    contentDescription = "Last Capture",
+                    contentDescription = "Open in Gallery",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
                 Icon(
                     imageVector = Icons.Default.CameraAlt,
-                    contentDescription = null,
+                    contentDescription = "Open Gallery",
                     tint = TextSecondary,
                     modifier = Modifier.size(20.dp)
                 )
             }
         }
 
-        // 2. Large Tactical Shutter Button
+        // 2. Tactile Shutter Button
         Box(
             modifier = Modifier
-                .size(72.dp)
+                .size(76.dp)
                 .scale(shutterScale)
                 .clip(CircleShape)
-                .border(3.5.dp, White, CircleShape)
+                .border(3.dp, White, CircleShape)
                 .padding(4.dp)
                 .clip(CircleShape)
-                .background(if (isCapturing) AuroraAmber else White)
+                .background(if (isCapturing) AmberGold else White)
                 .clickable(
                     interactionSource = interactionSource,
                     indication = null,
                     enabled = !isCapturing
                 ) {
+                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                     onShutterClicked()
                 },
             contentAlignment = Alignment.Center
         ) {
             if (isCapturing) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(26.dp),
+                    modifier = Modifier.size(28.dp),
                     color = DarkBackground,
-                    strokeWidth = 2.5.dp
+                    strokeWidth = 3.dp
                 )
             }
         }
 
-        // 3. Quick Look Active Pill / Toggle
+        // 3. Creative Modes & Drawer Toggle Button
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(50.dp)
                 .clip(CircleShape)
-                .background(if (isLookEnabled) Color(0x3300E5FF) else Color(0x22FFFFFF))
+                .background(if (isDrawerOpen) AmberGold else ElevatedSurface)
                 .border(
-                    1.dp,
-                    if (isLookEnabled) AuroraCyan else Color(0x44FFFFFF),
+                    1.5.dp,
+                    if (isDrawerOpen) AmberGold else SlateBorder,
                     CircleShape
                 )
-                .clickable { onLookQuickToggle() },
+                .clickable {
+                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    onDrawerToggle()
+                },
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.AutoAwesome,
-                contentDescription = "Toggle Look",
-                tint = if (isLookEnabled) AuroraCyan else TextSecondary,
+                imageVector = if (isDrawerOpen) Icons.Default.Close else Icons.Default.Tune,
+                contentDescription = "Creative Controls & Modes",
+                tint = if (isDrawerOpen) DarkBackground else White,
                 modifier = Modifier.size(20.dp)
             )
         }

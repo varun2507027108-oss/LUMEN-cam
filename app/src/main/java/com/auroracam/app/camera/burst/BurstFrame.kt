@@ -96,15 +96,25 @@ data class RawYuvFrame(
                 vDirect.put(vBuf)
             } else if (uPixelStride == 2) {
                 // Semi-planar / interleaved UV (e.g. NV21 or NV12)
+                val uRowBytes = ByteArray(uRowStride)
+                val vRowBytes = ByteArray(vRowStride)
+                val uOutRow = ByteArray(uvWidth)
+                val vOutRow = ByteArray(uvWidth)
                 for (row in 0 until uvHeight) {
-                    val uRowOffset = row * uRowStride
-                    val vRowOffset = row * vRowStride
+                    uBuf.position(row * uRowStride)
+                    val uLen = minOf(uRowStride, uBuf.remaining())
+                    uBuf.get(uRowBytes, 0, uLen)
+
+                    vBuf.position(row * vRowStride)
+                    val vLen = minOf(vRowStride, vBuf.remaining())
+                    vBuf.get(vRowBytes, 0, vLen)
+
                     for (col in 0 until uvWidth) {
-                        val uVal = uBuf.get(uRowOffset + col * uPixelStride)
-                        val vVal = vBuf.get(vRowOffset + col * vPixelStride)
-                        uDirect.put(uVal)
-                        vDirect.put(vVal)
+                        uOutRow[col] = uRowBytes[col * 2]
+                        vOutRow[col] = vRowBytes[col * 2]
                     }
+                    uDirect.put(uOutRow, 0, uvWidth)
+                    vDirect.put(vOutRow, 0, uvWidth)
                 }
             } else {
                 // pixelStride == 1 but rowStride != uvWidth

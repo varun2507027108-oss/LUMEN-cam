@@ -38,8 +38,7 @@ object GLConstants {
         val error = GLES30.glGetError()
         if (error != GLES30.GL_NO_ERROR) {
             val msg = "$op: glError 0x${Integer.toHexString(error)}"
-            Log.e(TAG, msg)
-            throw RuntimeException(msg)
+            Log.w(TAG, msg)
         }
     }
 }

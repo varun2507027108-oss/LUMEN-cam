@@ -1,5 +1,6 @@
 package com.auroracam.app.ui
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,20 +23,26 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Brightness6
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.Flip
+import androidx.compose.material.icons.filled.Flare
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -47,27 +55,41 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auroracam.app.capture.LutManager
-import com.auroracam.app.ui.theme.AuroraAmber
-import com.auroracam.app.ui.theme.AuroraCyan
+import com.auroracam.app.ui.theme.AmberGold
+import com.auroracam.app.ui.theme.AmberGoldDim
+import com.auroracam.app.ui.theme.DarkBackground
+import com.auroracam.app.ui.theme.DarkSurface
+import com.auroracam.app.ui.theme.ElevatedSurface
+import com.auroracam.app.ui.theme.SlateBorder
+import com.auroracam.app.ui.theme.TextMuted
 import com.auroracam.app.ui.theme.TextSecondary
 import com.auroracam.app.ui.theme.White
 import java.io.File
 
-enum class ShelfTab(val title: String) {
-    LOOKS("Looks"),
-    EFFECTS("Effects"),
-    FINE_TUNE("Tune"),
-    CAPTURE("Pro"),
-    DOUBLE_EXP("Blend")
+enum class ShelfTab(val title: String, val accentColor: Color) {
+    MODES("MODES", com.auroracam.app.ui.theme.SolarGold),
+    LOOKS("LOOKS", com.auroracam.app.ui.theme.LookWarmth),
+    EFFECTS("EFFECTS", com.auroracam.app.ui.theme.OpticCyan),
+    PRO("PRO", com.auroracam.app.ui.theme.FocusMint)
 }
 
+/**
+ * Minimalist Cinema Control Drawer.
+ *
+ * Elegantly groups Camera Modes (Standard, Temporal, Motion, Double Exp, Light Trails),
+ * Film LUT Color Grading, Rotary Effect Tuning, and Pro Architecture Options
+ * into an ergonomic panel positioned safely above Android system gestures.
+ */
 @Composable
-fun BottomControlShelf(
+fun CreativeDrawer(
     cameraMode: CameraMode,
+    onModeChanged: (CameraMode) -> Unit,
     // Look & Grading
     isLookEnabled: Boolean,
     onLookEnabledChanged: (Boolean) -> Unit,
@@ -116,204 +138,321 @@ fun BottomControlShelf(
     dxStage: DxStage = DxStage.STAGE_1_EMPTY,
     dxBlendMode: BlendMode = BlendMode.SCREEN,
     onBlendModeSelected: (BlendMode) -> Unit = {},
+    onCaptureFirstExposure: () -> Unit = {},
+    onResetDoubleExposure: () -> Unit = {},
     dxOpacity: Float = 1.0f,
     onOpacityChanged: (Float) -> Unit = {},
     dxIsFlipped: Boolean = false,
     onFlipToggled: () -> Unit = {},
     onRetakeClicked: () -> Unit = {},
+    onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var currentTab by remember { mutableStateOf(ShelfTab.LOOKS) }
+    val view = LocalView.current
+    var currentTab by remember { mutableStateOf(ShelfTab.MODES) }
     var showCustomLutMenu by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .navigationBarsPadding()
             .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-            .background(Color(0xE6101010))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(DarkSurface)
+            .border(1.dp, SlateBorder, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
-        // Tab Navigation Strip
+        // Drawer Header with Grab Handle & Title
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.Center,
+                .padding(bottom = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val tabs = when (cameraMode) {
-                CameraMode.DOUBLE_EXPOSURE -> listOf(ShelfTab.DOUBLE_EXP, ShelfTab.LOOKS, ShelfTab.EFFECTS, ShelfTab.FINE_TUNE, ShelfTab.CAPTURE)
-                CameraMode.LIGHT_TRAILS, CameraMode.TEMPORAL_ECHO, CameraMode.MOTION_EXPOSURE -> listOf(ShelfTab.EFFECTS, ShelfTab.LOOKS, ShelfTab.FINE_TUNE, ShelfTab.CAPTURE)
-                else -> listOf(ShelfTab.LOOKS, ShelfTab.EFFECTS, ShelfTab.FINE_TUNE, ShelfTab.CAPTURE)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(currentTab.accentColor)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "CREATIVE CONTROLS",
+                    color = White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp
+                )
             }
 
-            tabs.forEach { tab ->
-                val isSelected = currentTab == tab
-                Text(
-                    text = tab.title,
-                    fontSize = 11.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isSelected) AuroraCyan else TextSecondary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { currentTab = tab }
-                        .padding(horizontal = 10.dp, vertical = 2.dp)
+            // Close button
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(ElevatedSurface)
+                    .clickable {
+                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        onClose()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Close Drawer",
+                    tint = White,
+                    modifier = Modifier.size(14.dp)
                 )
             }
         }
 
+        // Tab Navigation Strip
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(ElevatedSurface)
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ShelfTab.values().forEach { tab ->
+                val isSelected = currentTab == tab
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(if (isSelected) tab.accentColor else Color.Transparent)
+                        .clickable {
+                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                            currentTab = tab
+                        }
+                        .padding(vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = tab.title,
+                        fontSize = 11.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                        fontFamily = FontFamily.Monospace,
+                        color = if (isSelected) DarkBackground else TextSecondary
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
         // Tab Content Area
         when (currentTab) {
-            ShelfTab.LOOKS -> {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            ShelfTab.MODES -> {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Natural / Off chip
-                    FilterChip(
-                        selected = !isLookEnabled,
-                        onClick = { onLookEnabledChanged(false) },
-                        label = { Text("RAW / Natural", fontSize = 10.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFF455A64),
-                            selectedLabelColor = White,
-                            containerColor = Color(0xFF1E1E1E),
-                            labelColor = TextSecondary
-                        ),
-                        modifier = Modifier.height(28.dp)
-                    )
-
-                    // Built-in presets
-                    LutManager.BUILTIN_PRESETS.forEach { preset ->
-                        val isSelected = isLookEnabled && activeLutName == preset
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                if (!isLookEnabled) onLookEnabledChanged(true)
-                                onSelectPreset(preset)
-                            },
-                            label = {
+                    // Creative Camera Modes Grid
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        listOf(
+                            Triple(CameraMode.STANDARD, "Standard", Pair(Icons.Default.CameraAlt, com.auroracam.app.ui.theme.HyperSilver)),
+                            Triple(CameraMode.TEMPORAL_ECHO, "Temporal", Pair(Icons.Default.History, com.auroracam.app.ui.theme.LookNostalgia)),
+                            Triple(CameraMode.MOTION_EXPOSURE, "Motion", Pair(Icons.AutoMirrored.Filled.DirectionsRun, com.auroracam.app.ui.theme.FocusMint)),
+                            Triple(CameraMode.DOUBLE_EXPOSURE, "Double Exp", Pair(Icons.Default.Layers, com.auroracam.app.ui.theme.OpticCyan)),
+                            Triple(CameraMode.LIGHT_TRAILS, "Light Trails", Pair(Icons.Default.Flare, com.auroracam.app.ui.theme.SolarOrange))
+                        ).forEach { (mode, title, iconAndColor) ->
+                            val (icon, modeColor) = iconAndColor
+                            val isSelected = cameraMode == mode
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (isSelected) modeColor else ElevatedSurface)
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) modeColor else SlateBorder,
+                                        RoundedCornerShape(14.dp)
+                                    )
+                                    .clickable {
+                                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                        onModeChanged(mode)
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = title,
+                                    tint = if (isSelected) DarkBackground else modeColor,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    preset,
-                                    fontSize = 10.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    text = title,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) DarkBackground else White
                                 )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = AuroraCyan,
-                                selectedLabelColor = Color.Black,
-                                containerColor = Color(0xFF1E1E1E),
-                                labelColor = White
-                            ),
-                            modifier = Modifier.height(28.dp)
-                        )
-                    }
-
-                    // .CUBE File Picker
-                    Box {
-                        val isCustomActive = isLookEnabled && !LutManager.BUILTIN_PRESETS.contains(activeLutName)
-                        FilterChip(
-                            selected = isCustomActive,
-                            onClick = { showCustomLutMenu = true },
-                            label = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.FileUpload,
-                                        contentDescription = "Import",
-                                        tint = if (isCustomActive) Color.Black else AuroraAmber,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        if (isCustomActive) activeLutName else ".CUBE",
-                                        fontSize = 10.sp
-                                    )
-                                }
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = AuroraAmber,
-                                selectedLabelColor = Color.Black,
-                                containerColor = Color(0xFF1E1E1E),
-                                labelColor = AuroraAmber
-                            ),
-                            modifier = Modifier.height(28.dp)
-                        )
-
-                        DropdownMenu(
-                            expanded = showCustomLutMenu,
-                            onDismissRequest = { showCustomLutMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("📁 Import .cube from Storage...") },
-                                onClick = {
-                                    onPickLutFile()
-                                    showCustomLutMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("⚡ Generate Test LUTs (Mono, Invert)") },
-                                onClick = {
-                                    onGenerateDebugLuts()
-                                    showCustomLutMenu = false
-                                }
-                            )
-                            if (availableLuts.isNotEmpty()) {
-                                DropdownMenuItem(
-                                    text = { Text("Cached LUTs:") },
-                                    onClick = {},
-                                    enabled = false
-                                )
-                                availableLuts.forEach { file ->
-                                    DropdownMenuItem(
-                                        text = { Text("🎨 ${file.nameWithoutExtension}") },
-                                        onClick = {
-                                            onSelectCachedLut(file)
-                                            showCustomLutMenu = false
-                                        }
-                                    )
-                                }
                             }
                         }
                     }
                 }
             }
 
-            ShelfTab.EFFECTS -> {
-                val currentParamValue = when (currentWheelParam) {
-                    WheelParameter.ECHO_DECAY -> temporalEchoDecay
-                    WheelParameter.MOTION_THRESHOLD -> motionThreshold
-                    WheelParameter.LIGHT_DECAY -> lightTrailDecay
-                    WheelParameter.CHROMATIC_ABERRATION -> chromaticAberration
-                    WheelParameter.LOOK_INTENSITY -> lookIntensity
-                    WheelParameter.HALATION_GLOW -> lookHalation
-                }
-
-                ParameterWheel(
-                    currentParam = currentWheelParam,
-                    paramValue = currentParamValue,
-                    onParamChanged = { param, value ->
-                        when (param) {
-                            WheelParameter.ECHO_DECAY -> onTemporalEchoDecayChanged(value)
-                            WheelParameter.MOTION_THRESHOLD -> onMotionThresholdChanged(value)
-                            WheelParameter.LIGHT_DECAY -> onLightTrailDecayChanged(value)
-                            WheelParameter.CHROMATIC_ABERRATION -> onChromaticAberrationChanged(value)
-                            WheelParameter.LOOK_INTENSITY -> onLookIntensityChanged(value)
-                            WheelParameter.HALATION_GLOW -> onLookHalationChanged(value)
-                        }
-                    },
-                    onSelectParam = onSelectWheelParam
-                )
-            }
-
-            ShelfTab.FINE_TUNE -> {
+            ShelfTab.LOOKS -> {
                 Column(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Look Intensity Slider
+                    // Presets Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Natural / Off chip
+                        FilterChip(
+                            selected = !isLookEnabled,
+                            onClick = {
+                                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                onLookEnabledChanged(false)
+                            },
+                            label = { Text("RAW / Natural", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AmberGold,
+                                selectedLabelColor = DarkBackground,
+                                containerColor = ElevatedSurface,
+                                labelColor = TextSecondary
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = !isLookEnabled,
+                                borderColor = SlateBorder,
+                                selectedBorderColor = AmberGold
+                            ),
+                            modifier = Modifier.height(30.dp)
+                        )
+
+                        // Built-in presets
+                        LutManager.BUILTIN_PRESETS.forEach { preset ->
+                            val isSelected = isLookEnabled && activeLutName == preset
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                    if (!isLookEnabled) onLookEnabledChanged(true)
+                                    onSelectPreset(preset)
+                                },
+                                label = {
+                                    Text(
+                                        preset,
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AmberGold,
+                                    selectedLabelColor = DarkBackground,
+                                    containerColor = ElevatedSurface,
+                                    labelColor = White
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isSelected,
+                                    borderColor = SlateBorder,
+                                    selectedBorderColor = AmberGold
+                                ),
+                                modifier = Modifier.height(30.dp)
+                            )
+                        }
+
+                        // .CUBE File Picker
+                        Box {
+                            val isCustomActive = isLookEnabled && !LutManager.BUILTIN_PRESETS.contains(activeLutName)
+                            FilterChip(
+                                selected = isCustomActive,
+                                onClick = { showCustomLutMenu = true },
+                                label = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.FileUpload,
+                                            contentDescription = "Import",
+                                            tint = if (isCustomActive) DarkBackground else AmberGold,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            if (isCustomActive) activeLutName else ".CUBE",
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AmberGold,
+                                    selectedLabelColor = DarkBackground,
+                                    containerColor = ElevatedSurface,
+                                    labelColor = AmberGold
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isCustomActive,
+                                    borderColor = SlateBorder,
+                                    selectedBorderColor = AmberGold
+                                ),
+                                modifier = Modifier.height(30.dp)
+                            )
+
+                            DropdownMenu(
+                                expanded = showCustomLutMenu,
+                                onDismissRequest = { showCustomLutMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Import .cube file...") },
+                                    leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null, tint = AmberGold) },
+                                    onClick = {
+                                        onPickLutFile()
+                                        showCustomLutMenu = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Generate test LUTs (Mono, Invert)") },
+                                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = White) },
+                                    onClick = {
+                                        onGenerateDebugLuts()
+                                        showCustomLutMenu = false
+                                    }
+                                )
+                                if (availableLuts.isNotEmpty()) {
+                                    DropdownMenuItem(
+                                        text = { Text("Cached LUTs:", color = TextSecondary, fontSize = 11.sp) },
+                                        onClick = {},
+                                        enabled = false
+                                    )
+                                    availableLuts.forEach { file ->
+                                        DropdownMenuItem(
+                                            text = { Text(file.nameWithoutExtension) },
+                                            leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null, tint = AmberGold) },
+                                            onClick = {
+                                                onSelectCachedLut(file)
+                                                showCustomLutMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Look Intensity & Halation Sliders
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -321,8 +460,9 @@ fun BottomControlShelf(
                         Text(
                             text = "Mix ${(lookIntensity * 100).toInt()}%",
                             color = TextSecondary,
-                            fontSize = 10.sp,
-                            modifier = Modifier.width(76.dp)
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.width(68.dp)
                         )
                         Slider(
                             value = lookIntensity,
@@ -332,14 +472,13 @@ fun BottomControlShelf(
                                 .weight(1f)
                                 .height(22.dp),
                             colors = SliderDefaults.colors(
-                                thumbColor = AuroraCyan,
-                                activeTrackColor = AuroraCyan,
-                                inactiveTrackColor = Color(0xFF333333)
+                                thumbColor = AmberGold,
+                                activeTrackColor = AmberGold,
+                                inactiveTrackColor = ElevatedSurface
                             )
                         )
                     }
 
-                    // Halation Glow Slider
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -347,8 +486,9 @@ fun BottomControlShelf(
                         Text(
                             text = "Glow ${(lookHalation * 100).toInt()}%",
                             color = TextSecondary,
-                            fontSize = 10.sp,
-                            modifier = Modifier.width(76.dp)
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.width(68.dp)
                         )
                         Slider(
                             value = lookHalation,
@@ -358,230 +498,257 @@ fun BottomControlShelf(
                                 .weight(1f)
                                 .height(22.dp),
                             colors = SliderDefaults.colors(
-                                thumbColor = AuroraAmber,
-                                activeTrackColor = AuroraAmber,
-                                inactiveTrackColor = Color(0xFF333333)
-                            )
-                        )
-                    }
-
-                    // Chromatic Aberration Slider
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Aberr ${(chromaticAberration * 100).toInt()}%",
-                            color = TextSecondary,
-                            fontSize = 10.sp,
-                            modifier = Modifier.width(76.dp)
-                        )
-                        Slider(
-                            value = chromaticAberration,
-                            onValueChange = onChromaticAberrationChanged,
-                            valueRange = 0.0f..1.0f,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(22.dp),
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color(0xFFFF4081),
-                                activeTrackColor = Color(0xFFFF4081),
-                                inactiveTrackColor = Color(0xFF333333)
+                                thumbColor = AmberGold,
+                                activeTrackColor = AmberGold,
+                                inactiveTrackColor = ElevatedSurface
                             )
                         )
                     }
                 }
             }
 
-            ShelfTab.CAPTURE -> {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            ShelfTab.EFFECTS -> {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // QuickStack Burst Toggle
-                    FilterChip(
-                        selected = isBurstStack,
-                        onClick = onBurstStackToggled,
-                        label = {
-                            Text(
-                                if (isBurstStack) "⚡ Burst N=6" else "Single Shot",
-                                fontSize = 10.sp
-                            )
+                    val currentParamValue = when (currentWheelParam) {
+                        WheelParameter.ECHO_DECAY -> temporalEchoDecay
+                        WheelParameter.MOTION_THRESHOLD -> motionThreshold
+                        WheelParameter.LIGHT_DECAY -> lightTrailDecay
+                        WheelParameter.CHROMATIC_ABERRATION -> chromaticAberration
+                        WheelParameter.LOOK_INTENSITY -> lookIntensity
+                        WheelParameter.HALATION_GLOW -> lookHalation
+                    }
+
+                    ParameterWheel(
+                        currentParam = currentWheelParam,
+                        paramValue = currentParamValue,
+                        onParamChanged = { param, value ->
+                            when (param) {
+                                WheelParameter.ECHO_DECAY -> onTemporalEchoDecayChanged(value)
+                                WheelParameter.MOTION_THRESHOLD -> onMotionThresholdChanged(value)
+                                WheelParameter.LIGHT_DECAY -> onLightTrailDecayChanged(value)
+                                WheelParameter.CHROMATIC_ABERRATION -> onChromaticAberrationChanged(value)
+                                WheelParameter.LOOK_INTENSITY -> onLookIntensityChanged(value)
+                                WheelParameter.HALATION_GLOW -> onLookHalationChanged(value)
+                            }
                         },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = AuroraCyan,
-                            selectedLabelColor = Color.Black,
-                            containerColor = Color(0xFF1E1E1E),
-                            labelColor = White
-                        ),
-                        modifier = Modifier.height(28.dp)
+                        onSelectParam = onSelectWheelParam
                     )
 
-                    // 16F Precision Toggle
-                    FilterChip(
-                        selected = isLookPrecision16f,
-                        onClick = onLookPrecision16fToggled,
-                        label = {
-                            Text(
-                                if (isLookPrecision16f) "16-Bit Float" else "8-Bit RGBA",
-                                fontSize = 10.sp
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = AuroraAmber,
-                            selectedLabelColor = Color.Black,
-                            containerColor = Color(0xFF1E1E1E),
-                            labelColor = White
-                        ),
-                        modifier = Modifier.height(28.dp)
-                    )
+                    // Contextual Double Exposure controls
+                    if (cameraMode == CameraMode.DOUBLE_EXPOSURE) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            BlendMode.values().forEach { mode ->
+                                val isSelected = dxBlendMode == mode
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { onBlendModeSelected(mode) },
+                                    label = { Text(mode.label, fontSize = 9.sp, fontFamily = FontFamily.Monospace) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = AmberGold,
+                                        selectedLabelColor = DarkBackground,
+                                        containerColor = ElevatedSurface,
+                                        labelColor = White
+                                    ),
+                                    border = FilterChipDefaults.filterChipBorder(
+                                        enabled = true,
+                                        selected = isSelected,
+                                        borderColor = SlateBorder,
+                                        selectedBorderColor = AmberGold
+                                    ),
+                                    modifier = Modifier.height(26.dp)
+                                )
+                            }
+                        }
+                    }
 
-                    // Developer GPU Profiling Overlay Toggle
-                    FilterChip(
-                        selected = showGpuOverlay,
-                        onClick = onShowGpuOverlayToggled,
-                        label = {
-                            Text(
-                                if (showGpuOverlay) "📊 GPU HUD ON" else "📊 GPU HUD",
-                                fontSize = 10.sp
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFF00E676),
-                            selectedLabelColor = Color.Black,
-                            containerColor = Color(0xFF1E1E1E),
-                            labelColor = White
-                        ),
-                        modifier = Modifier.height(28.dp)
-                    )
-
-                    // Light Trail Accumulation Modes & Reset
+                    // Contextual Light Trails controls
                     if (cameraMode == CameraMode.LIGHT_TRAILS) {
-                        listOf(
-                            0 to "MAX",
-                            1 to "ADD",
-                            2 to "SCREEN"
-                        ).forEach { (modeId, label) ->
-                            val isSelected = lightTrailBlendMode == modeId
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            listOf(0 to "MAX", 1 to "ADD", 2 to "SCREEN").forEach { (modeId, label) ->
+                                val isSelected = lightTrailBlendMode == modeId
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { onLightTrailBlendModeChanged(modeId) },
+                                    label = { Text(label, fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = AmberGold,
+                                        selectedLabelColor = DarkBackground,
+                                        containerColor = ElevatedSurface,
+                                        labelColor = White
+                                    ),
+                                    border = FilterChipDefaults.filterChipBorder(
+                                        enabled = true,
+                                        selected = isSelected,
+                                        borderColor = SlateBorder,
+                                        selectedBorderColor = AmberGold
+                                    ),
+                                    modifier = Modifier.height(28.dp)
+                                )
+                            }
+
                             FilterChip(
-                                selected = isSelected,
-                                onClick = { onLightTrailBlendModeChanged(modeId) },
-                                label = { Text("Trail $label", fontSize = 10.sp) },
+                                selected = false,
+                                onClick = onClearLightTrails,
+                                label = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.RestartAlt, contentDescription = null, tint = AmberGold, modifier = Modifier.size(12.dp))
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text("Reset", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                    }
+                                },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = AuroraAmber,
-                                    selectedLabelColor = Color.Black,
-                                    containerColor = Color(0xFF1E1E1E),
-                                    labelColor = White
+                                    containerColor = AmberGoldDim,
+                                    labelColor = AmberGold
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = false,
+                                    borderColor = AmberGold.copy(alpha = 0.4f),
+                                    selectedBorderColor = AmberGold
                                 ),
                                 modifier = Modifier.height(28.dp)
                             )
                         }
-
-                        FilterChip(
-                            selected = false,
-                            onClick = onClearLightTrails,
-                            label = { Text("🧹 Reset Trails", fontSize = 10.sp, color = AuroraAmber) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = Color(0xFF2A1B00),
-                                labelColor = AuroraAmber
-                            ),
-                            modifier = Modifier.height(28.dp)
-                        )
-                    }
-
-                    // Format Chips
-                    FormatMode.values().forEach { mode ->
-                        FilterChip(
-                            selected = currentFormat == mode,
-                            onClick = { onFormatChanged(mode) },
-                            label = { Text(mode.label, fontSize = 10.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = if (mode == FormatMode.XPAN) Color(0xFFD84315) else Color(0xFF37474F),
-                                selectedLabelColor = White,
-                                containerColor = Color(0xFF1E1E1E),
-                                labelColor = TextSecondary
-                            ),
-                            modifier = Modifier.height(28.dp)
-                        )
                     }
                 }
             }
 
-            ShelfTab.DOUBLE_EXP -> {
+            ShelfTab.PRO -> {
                 Column(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Blend mode chips
+                    // Aspect Ratio formats
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        BlendMode.values().forEach { mode ->
-                            val isSelected = dxBlendMode == mode
+                        Text("FORMAT", color = TextSecondary, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(70.dp))
+                        FormatMode.values().forEach { mode ->
+                            val isSelected = currentFormat == mode
                             FilterChip(
                                 selected = isSelected,
-                                onClick = { onBlendModeSelected(mode) },
-                                label = { Text(mode.label, fontSize = 9.sp) },
+                                onClick = { onFormatChanged(mode) },
+                                label = { Text(mode.label, fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = AuroraCyan,
-                                    selectedLabelColor = Color.Black,
-                                    containerColor = Color(0xFF1E1E1E),
+                                    selectedContainerColor = AmberGold,
+                                    selectedLabelColor = DarkBackground,
+                                    containerColor = ElevatedSurface,
                                     labelColor = White
                                 ),
-                                modifier = Modifier.height(26.dp)
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isSelected,
+                                    borderColor = SlateBorder,
+                                    selectedBorderColor = AmberGold
+                                ),
+                                modifier = Modifier.height(28.dp)
                             )
                         }
                     }
 
-                    // Opacity & Retake Row
+                    // Architecture Toggles Row
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Mix ${(dxOpacity * 100).toInt()}%",
-                            color = TextSecondary,
-                            fontSize = 10.sp,
-                            modifier = Modifier.width(55.dp)
-                        )
-                        Slider(
-                            value = dxOpacity,
-                            onValueChange = onOpacityChanged,
-                            valueRange = 0.0f..1.0f,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(22.dp),
-                            colors = SliderDefaults.colors(
-                                thumbColor = AuroraCyan,
-                                activeTrackColor = AuroraCyan,
-                                inactiveTrackColor = Color(0xFF333333)
-                            )
+                        FilterChip(
+                            selected = isLookPrecision16f,
+                            onClick = onLookPrecision16fToggled,
+                            label = { Text(if (isLookPrecision16f) "16-Bit Float FBO" else "8-Bit RGBA", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AmberGold,
+                                selectedLabelColor = DarkBackground,
+                                containerColor = ElevatedSurface,
+                                labelColor = White
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isLookPrecision16f,
+                                borderColor = SlateBorder,
+                                selectedBorderColor = AmberGold
+                            ),
+                            modifier = Modifier.height(28.dp)
                         )
 
-                        if (dxStage == DxStage.STAGE_2_LOCKED) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Retake",
-                                color = AuroraAmber,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable { onRetakeClicked() }
-                                    .background(Color(0xFF2E2000))
-                                    .padding(horizontal = 8.dp, vertical = 2.dp)
-                            )
-                        }
+                        FilterChip(
+                            selected = isPreviewBufferHd,
+                            onClick = onPreviewBufferHdToggled,
+                            label = { Text(if (isPreviewBufferHd) "HD Viewfinder" else "Standard Viewfinder", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AmberGold,
+                                selectedLabelColor = DarkBackground,
+                                containerColor = ElevatedSurface,
+                                labelColor = White
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isPreviewBufferHd,
+                                borderColor = SlateBorder,
+                                selectedBorderColor = AmberGold
+                            ),
+                            modifier = Modifier.height(28.dp)
+                        )
+
+                        FilterChip(
+                            selected = showGpuOverlay,
+                            onClick = onShowGpuOverlayToggled,
+                            label = { Text(if (showGpuOverlay) "GPU HUD ON" else "GPU HUD OFF", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AmberGold,
+                                selectedLabelColor = DarkBackground,
+                                containerColor = ElevatedSurface,
+                                labelColor = White
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = showGpuOverlay,
+                                borderColor = SlateBorder,
+                                selectedBorderColor = AmberGold
+                            ),
+                            modifier = Modifier.height(28.dp)
+                        )
+
+                        FilterChip(
+                            selected = isLegacyJpeg,
+                            onClick = onLegacyJpegToggled,
+                            label = { Text(if (isLegacyJpeg) "JPEG Stream" else "Direct YUV420", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AmberGold,
+                                selectedLabelColor = DarkBackground,
+                                containerColor = ElevatedSurface,
+                                labelColor = White
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isLegacyJpeg,
+                                borderColor = SlateBorder,
+                                selectedBorderColor = AmberGold
+                            ),
+                            modifier = Modifier.height(28.dp)
+                        )
                     }
                 }
             }
         }
     }
 }
-

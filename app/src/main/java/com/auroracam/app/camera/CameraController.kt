@@ -40,6 +40,17 @@ class CameraController(
         rebindCamera()
     }
 
+    fun onPause() {
+        Log.i(TAG, "onPause: closing camera")
+        captureEngine.closeCamera()
+    }
+
+    fun onResume() {
+        Log.i(TAG, "onResume: re-opening camera")
+        rebindCamera()
+    }
+
+    @Synchronized
     private fun rebindCamera() {
         val st = surfaceTexture ?: return
         captureEngine.open(

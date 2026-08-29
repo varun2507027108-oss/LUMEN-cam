@@ -112,10 +112,42 @@ object CaptureSaver {
         quality: Int = 97,
         telemetry: Telemetry? = null
     ): Uri? = withContext(Dispatchers.IO) {
-        val stream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
-        val bytes = stream.toByteArray()
-        saveJpegBytes(context, bytes, fileName, 0, bitmap.width, bitmap.height, telemetry)
+        val resolver = context.contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/$ALBUM_NAME")
+            put(MediaStore.Images.Media.ORIENTATION, 0)
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        if (uri == null) {
+            Log.e(TAG, "Failed to create MediaStore entry for $fileName")
+            return@withContext null
+        }
+
+        try {
+            resolver.openOutputStream(uri)?.use { outputStream ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
+                outputStream.flush()
+            }
+
+            contentValues.clear()
+            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, contentValues, null, null)
+
+            val isoStr = telemetry?.iso?.toString() ?: "N/A"
+            val expStr = telemetry?.expTimeFormatted ?: "N/A"
+            val sizeStr = "${bitmap.width}x${bitmap.height}"
+            Log.i(TAG, "CAPTURE $fileName  ISO=$isoStr ExpTime=$expStr size=$sizeStr")
+            Log.i(TAG, "Saved image: $uri (path: Pictures/$ALBUM_NAME/$fileName)")
+            uri
+        } catch (e: Exception) {
+            Log.e(TAG, "Error writing image $fileName to MediaStore", e)
+            resolver.delete(uri, null, null)
+            null
+        }
     }
 
     suspend fun saveJpegBytes(
@@ -183,4 +215,67 @@ object CaptureSaver {
             null
         }
     }
+
+    suspend fun loadFullBitmap(
+        context: Context,
+        uri: Uri
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load full bitmap for $uri", e)
+            null
+        }
+    }
+
+    suspend fun getLatestCaptureUri(
+        context: Context
+    ): Uri? = withContext(Dispatchers.IO) {
+        try {
+            val projection = arrayOf(
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DATE_ADDED
+            )
+            val selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+            val selectionArgs = arrayOf("%$ALBUM_NAME%")
+            val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+
+            context.contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                sortOrder
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    val id = cursor.getLong(idCol)
+                    return@withContext Uri.withAppendedPath(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        id.toString()
+                    )
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to query latest capture", e)
+            null
+        }
+    }
+
+    suspend fun deleteCapture(
+        context: Context,
+        uri: Uri
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val rows = context.contentResolver.delete(uri, null, null)
+            rows > 0
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete capture: $uri", e)
+            false
+        }
+    }
 }
+

@@ -1,11 +1,18 @@
 package com.auroracam.app.ui
 
 import android.graphics.Bitmap
+import android.net.Uri
 import android.opengl.GLSurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -44,7 +52,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import android.content.Intent
 import com.auroracam.app.camera.CameraController
 import com.auroracam.app.capture.CaptureSaver
 import com.auroracam.app.capture.DxMetadata
@@ -52,9 +63,14 @@ import com.auroracam.app.capture.LutManager
 import com.auroracam.app.gl.AuroraRenderer
 import com.auroracam.app.gl.GpuTelemetry
 import com.auroracam.app.gl.lut.DebugLutGenerator
+import com.auroracam.app.ui.theme.AmberGold
 import com.auroracam.app.ui.theme.AuroraCyan
 import com.auroracam.app.ui.theme.DarkBackground
+import com.auroracam.app.ui.theme.SlateBorder
+import com.auroracam.app.ui.theme.StatusGreen
+import com.auroracam.app.ui.theme.StatusRed
 import com.auroracam.app.ui.theme.TextSecondary
+import com.auroracam.app.ui.theme.White
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -73,14 +89,18 @@ fun CameraScreen() {
     var isManualExposureEnabled by remember { mutableStateOf(false) }
     var isCapturing by remember { mutableStateOf(false) }
     var lastCapturedThumbnail by remember { mutableStateOf<Bitmap?>(null) }
+    var lastCapturedUri by remember { mutableStateOf<Uri?>(null) }
+    var isPhotoViewerOpen by remember { mutableStateOf(false) }
     var captureStatus by remember { mutableStateOf<String?>(null) }
 
     // Tap-to-Focus & Exposure State
     var focusPoint by remember { mutableStateOf<Offset?>(null) }
     var evBias by remember { mutableFloatStateOf(0.0f) }
+    var isAeAfLocked by remember { mutableStateOf(false) }
 
-    // Mode & Format State
+    // Mode & Drawer State
     var cameraMode by remember { mutableStateOf(CameraMode.STANDARD) }
+    var isDrawerOpen by remember { mutableStateOf(false) }
     var currentFormat by remember { mutableStateOf(FormatMode.RATIO_4_3) }
     var dxStage by remember { mutableStateOf(DxStage.STAGE_1_EMPTY) }
     var blendMode by remember { mutableStateOf(BlendMode.SCREEN) }
@@ -109,6 +129,7 @@ fun CameraScreen() {
     var gpuTelemetry by remember { mutableStateOf(GpuTelemetry()) }
 
     var rendererRef by remember { mutableStateOf<AuroraRenderer?>(null) }
+    var glSurfaceViewRef by remember { mutableStateOf<GLSurfaceView?>(null) }
 
     // SAF Document Launcher for .cube files
     val lutPickerLauncher = rememberLauncherForActivityResult(
@@ -128,18 +149,54 @@ fun CameraScreen() {
         }
     }
 
-    // Load initial LUT & auto-generate test/debug LUTs on startup
+    // Load initial LUT & auto-generate test/debug LUTs & load latest photo on startup
     LaunchedEffect(Unit) {
         val (name, cube) = lutManager.loadInitialLut()
         activeLutName = name
         rendererRef?.updateLutCube(cube)
         DebugLutGenerator.generateDebugCubes(context)
         cachedLutsList = lutManager.listCachedLuts()
+
+        withContext(Dispatchers.IO) {
+            val latestUri = CaptureSaver.getLatestCaptureUri(context)
+            if (latestUri != null) {
+                val thumb = CaptureSaver.loadThumbnail(context, latestUri)
+                withContext(Dispatchers.Main) {
+                    lastCapturedUri = latestUri
+                    lastCapturedThumbnail = thumb
+                }
+            }
+        }
     }
 
+    // Robust Lifecycle Event Observer to properly close & resume camera and GL rendering
     DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    glSurfaceViewRef?.onPause()
+                    cameraController.onPause()
+                }
+                Lifecycle.Event.ON_RESUME, Lifecycle.Event.ON_START -> {
+                    glSurfaceViewRef?.onResume()
+                    cameraController.onResume()
+                    coroutineScope.launch(Dispatchers.IO) {
+                        val latestUri = CaptureSaver.getLatestCaptureUri(context)
+                        val thumb = latestUri?.let { CaptureSaver.loadThumbnail(context, it) }
+                        withContext(Dispatchers.Main) {
+                            lastCapturedUri = latestUri
+                            lastCapturedThumbnail = thumb
+                        }
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         cameraController.startCamera()
+
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
             cameraController.release()
             rendererRef?.release()
         }
@@ -150,23 +207,36 @@ fun CameraScreen() {
             .fillMaxSize()
             .background(DarkBackground)
     ) {
-        // 1. OpenGL Viewport with Tap-to-Focus gesture handler
+        // 1. OpenGL Viewport with Tap-to-Focus and Long-Press AE/AF Lock
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
-                    detectTapGestures { tapOffset ->
-                        focusPoint = tapOffset
-                        val xNorm = (tapOffset.x / size.width.toFloat()).coerceIn(0f, 1f)
-                        val yNorm = (tapOffset.y / size.height.toFloat()).coerceIn(0f, 1f)
-                        cameraController.triggerTapToFocus(xNorm, yNorm)
-                    }
+                    detectTapGestures(
+                        onTap = { tapOffset ->
+                            focusPoint = tapOffset
+                            isAeAfLocked = false
+                            cameraController.setAeAwbLock(false)
+                            val xNorm = (tapOffset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                            val yNorm = (tapOffset.y / size.height.toFloat()).coerceIn(0f, 1f)
+                            cameraController.triggerTapToFocus(xNorm, yNorm)
+                        },
+                        onLongPress = { tapOffset ->
+                            focusPoint = tapOffset
+                            isAeAfLocked = true
+                            cameraController.setAeAwbLock(true)
+                            val xNorm = (tapOffset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                            val yNorm = (tapOffset.y / size.height.toFloat()).coerceIn(0f, 1f)
+                            cameraController.triggerTapToFocus(xNorm, yNorm)
+                        }
+                    )
                 }
         ) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     GLSurfaceView(ctx).apply {
+                        glSurfaceViewRef = this
                         setEGLContextClientVersion(3)
                         val renderer = AuroraRenderer(
                             glSurfaceView = this,
@@ -198,7 +268,7 @@ fun CameraScreen() {
         // 2. Format Framing Guides Overlay (Compose overlay only — not baked into capture)
         FormatOverlay(formatMode = currentFormat)
 
-        // 3. Interactive Focus Ring + Exposure Slider
+        // 3. Interactive Focus Ring + Exposure Slider with AE/AF Lock
         FocusRing(
             focusPoint = focusPoint,
             evBias = evBias,
@@ -206,12 +276,27 @@ fun CameraScreen() {
                 evBias = ev
                 cameraController.setExposureCompensation(ev)
             },
-            onDismiss = { focusPoint = null }
+            onDismiss = {
+                if (!isAeAfLocked) {
+                    focusPoint = null
+                }
+            },
+            isLocked = isAeAfLocked,
+            onToggleLock = {
+                isAeAfLocked = !isAeAfLocked
+                cameraController.setAeAwbLock(isAeAfLocked)
+            }
         )
 
         // 4. Ultra-Minimal Top HUD Bar
         CameraTopBar(
             currentFps = currentFps,
+            isHdrEnabled = isBurstStack,
+            onHdrToggled = {
+                val next = !isBurstStack
+                isBurstStack = next
+                cameraController.setBurstStack(next)
+            },
             cameraMode = cameraMode,
             dxStage = dxStage,
             currentFormat = currentFormat,
@@ -239,7 +324,7 @@ fun CameraScreen() {
             )
         }
 
-        // 6. Bottom Controls Stack: Mode Selector -> Shutter Bar -> Options Shelf Below Shutter
+        // 6. Bottom Controls: Shutter Bar -> Consolidated Creative Drawer
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -247,56 +332,38 @@ fun CameraScreen() {
                 .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Mode Selector Ribbon (Compact pills right above shutter)
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0x88000000))
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CameraMode.values().forEach { mode ->
-                    val isSelected = cameraMode == mode
-                    Text(
-                        text = if (mode == CameraMode.STANDARD && isBurstStack) "QUICKSTACK" else mode.title.uppercase(),
-                        color = if (isSelected) AuroraCyan else TextSecondary,
-                        fontSize = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSelected) Color(0x3300E5FF) else Color.Transparent)
-                            .clickable {
-                                cameraMode = mode
-                                rendererRef?.currentMode = mode
-                                if (mode == CameraMode.LIGHT_TRAILS) {
-                                    rendererRef?.clearLightTrails()
-                                }
-                                if (mode == CameraMode.STANDARD) {
-                                    rendererRef?.retakeFirstExposure()
-                                    cameraController.setAeAwbLock(false)
-                                    evBias = 0.0f
-                                    cameraController.setExposureCompensation(0f)
-                                }
-                            }
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Shutter Bar (Gallery Thumbnail | Big Shutter | Quick Look Toggle)
+            // Shutter Bar (In-App Gallery Thumbnail | Big Shutter | Creative Drawer Toggle)
             CameraShutterBar(
                 isCapturing = isCapturing,
                 lastCapturedThumbnail = lastCapturedThumbnail,
+                onThumbnailClicked = {
+                    try {
+                        if (lastCapturedUri != null) {
+                            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(lastCapturedUri, "image/*")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(viewIntent)
+                        } else {
+                            val galleryIntent = Intent(Intent.ACTION_VIEW).apply {
+                                type = "image/*"
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(galleryIntent)
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("CameraScreen", "Could not open gallery intent: ${e.message}")
+                        if (lastCapturedUri != null) {
+                            isPhotoViewerOpen = true
+                        }
+                    }
+                },
                 activeLookName = activeLutName,
                 isLookEnabled = isLookEnabled,
-                onLookQuickToggle = {
-                    isLookEnabled = !isLookEnabled
-                    rendererRef?.isLookEnabled = isLookEnabled
-                },
-                statusText = captureStatus,
+                cameraMode = cameraMode,
+                isDrawerOpen = isDrawerOpen,
+                onDrawerToggle = { isDrawerOpen = !isDrawerOpen },
                 onShutterClicked = {
                     if (isCapturing) return@CameraShutterBar
 
@@ -342,6 +409,7 @@ fun CameraScreen() {
                                                     mergedBitmap.recycle()
                                                     val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
                                                     withContext(Dispatchers.Main) {
+                                                        lastCapturedUri = uri
                                                         lastCapturedThumbnail = thumb
                                                         isCapturing = false
                                                         captureStatus = null
@@ -379,6 +447,7 @@ fun CameraScreen() {
                                                 gradedBmp.recycle()
                                                 val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
                                                 withContext(Dispatchers.Main) {
+                                                    lastCapturedUri = uri
                                                     lastCapturedThumbnail = thumb
                                                     isCapturing = false
                                                     captureStatus = null
@@ -449,11 +518,13 @@ fun CameraScreen() {
                                                 )
 
                                                 cameraController.setAeAwbLock(false)
+                                                isAeAfLocked = false
                                                 evBias = 0.0f
                                                 cameraController.setExposureCompensation(0f)
 
                                                 val thumb = compUri?.let { CaptureSaver.loadThumbnail(context, it) }
                                                 withContext(Dispatchers.Main) {
+                                                    lastCapturedUri = compUri
                                                     lastCapturedThumbnail = thumb
                                                     isCapturing = false
                                                     captureStatus = null
@@ -498,6 +569,7 @@ fun CameraScreen() {
                                             finalBmp.recycle()
                                             val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
                                             withContext(Dispatchers.Main) {
+                                                lastCapturedUri = uri
                                                 lastCapturedThumbnail = thumb
                                                 isCapturing = false
                                                 captureStatus = null
@@ -505,7 +577,6 @@ fun CameraScreen() {
                                         }
                                     }
                                 } else {
-                                    // Fallback to preview FBO capture if takePictureBitmap unavailable
                                     rendererRef?.captureLiveSceneStill { liveBmp ->
                                         coroutineScope.launch(Dispatchers.IO) {
                                             val cropped = currentFormat.cropBitmap(liveBmp)
@@ -535,6 +606,7 @@ fun CameraScreen() {
                                             liveBmp.recycle()
                                             val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
                                             withContext(Dispatchers.Main) {
+                                                lastCapturedUri = uri
                                                 lastCapturedThumbnail = thumb
                                                 isCapturing = false
                                                 captureStatus = null
@@ -550,139 +622,182 @@ fun CameraScreen() {
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // 7. Options Shelf BELOW the Shutter Button
-            BottomControlShelf(
-                cameraMode = cameraMode,
-                isLookEnabled = isLookEnabled,
-                onLookEnabledChanged = { enabled ->
-                    isLookEnabled = enabled
-                    rendererRef?.isLookEnabled = enabled
-                },
-                activeLutName = activeLutName,
-                onSelectPreset = { preset ->
-                    val (name, cube) = lutManager.selectPreset(preset)
-                    activeLutName = name
-                    rendererRef?.updateLutCube(cube)
-                },
-                onPickLutFile = { lutPickerLauncher.launch(arrayOf("*/*")) },
-                onGenerateDebugLuts = {
-                    coroutineScope.launch {
-                        DebugLutGenerator.generateDebugCubes(context)
-                        cachedLutsList = lutManager.listCachedLuts()
-                    }
-                },
-                availableLuts = cachedLutsList,
-                onSelectCachedLut = { file ->
-                    coroutineScope.launch {
-                        val (name, cube) = lutManager.selectCachedLut(file)
+            // 7. Consolidated Creative Drawer (Modes, Looks, Smooth Effects, Pro Options)
+            AnimatedVisibility(
+                visible = isDrawerOpen,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+            ) {
+                CreativeDrawer(
+                    cameraMode = cameraMode,
+                    onModeChanged = { mode ->
+                        cameraMode = mode
+                        rendererRef?.currentMode = mode
+                        if (mode == CameraMode.LIGHT_TRAILS) {
+                            rendererRef?.clearLightTrails()
+                        }
+                        if (mode == CameraMode.STANDARD) {
+                            rendererRef?.retakeFirstExposure()
+                            cameraController.setAeAwbLock(false)
+                            isAeAfLocked = false
+                            evBias = 0.0f
+                            cameraController.setExposureCompensation(0f)
+                        }
+                    },
+                    isLookEnabled = isLookEnabled,
+                    onLookEnabledChanged = { enabled ->
+                        isLookEnabled = enabled
+                        rendererRef?.isLookEnabled = enabled
+                    },
+                    activeLutName = activeLutName,
+                    onSelectPreset = { preset ->
+                        val (name, cube) = lutManager.selectPreset(preset)
                         activeLutName = name
                         rendererRef?.updateLutCube(cube)
+                    },
+                    onPickLutFile = { lutPickerLauncher.launch(arrayOf("*/*")) },
+                    onGenerateDebugLuts = {
+                        coroutineScope.launch {
+                            DebugLutGenerator.generateDebugCubes(context)
+                            cachedLutsList = lutManager.listCachedLuts()
+                        }
+                    },
+                    availableLuts = cachedLutsList,
+                    onSelectCachedLut = { file ->
+                        coroutineScope.launch {
+                            val (name, cube) = lutManager.selectCachedLut(file)
+                            activeLutName = name
+                            rendererRef?.updateLutCube(cube)
+                        }
+                    },
+                    onResetToDefaultLut = {
+                        val (name, cube) = lutManager.resetToDefault()
+                        activeLutName = name
+                        rendererRef?.updateLutCube(cube)
+                    },
+                    lookIntensity = lookIntensity,
+                    onLookIntensityChanged = { intensity ->
+                        lookIntensity = intensity
+                        rendererRef?.lookIntensity = intensity
+                    },
+                    lookHalation = lookHalation,
+                    onLookHalationChanged = { halo ->
+                        lookHalation = halo
+                        rendererRef?.lookHalation = halo
+                    },
+                    temporalEchoDecay = temporalEchoDecay,
+                    onTemporalEchoDecayChanged = { decay ->
+                        temporalEchoDecay = decay
+                        rendererRef?.temporalEchoDecay = decay
+                    },
+                    motionThreshold = motionThreshold,
+                    onMotionThresholdChanged = { thresh ->
+                        motionThreshold = thresh
+                        rendererRef?.motionThreshold = thresh
+                    },
+                    lightTrailDecay = lightTrailDecay,
+                    onLightTrailDecayChanged = { decay ->
+                        lightTrailDecay = decay
+                        rendererRef?.lightTrailDecay = decay
+                    },
+                    lightTrailBlendMode = lightTrailBlendMode,
+                    onLightTrailBlendModeChanged = { mode ->
+                        lightTrailBlendMode = mode
+                        rendererRef?.lightTrailBlendMode = mode
+                    },
+                    chromaticAberration = chromaticAberration,
+                    onChromaticAberrationChanged = { ca ->
+                        chromaticAberration = ca
+                        rendererRef?.chromaticAberrationIntensity = ca
+                    },
+                    onClearLightTrails = {
+                        rendererRef?.clearLightTrails()
+                    },
+                    currentWheelParam = currentWheelParam,
+                    onSelectWheelParam = { param ->
+                        currentWheelParam = param
+                    },
+                    evBias = evBias,
+                    onEvBiasChanged = { ev ->
+                        evBias = ev
+                        cameraController.setExposureCompensation(ev)
+                    },
+                    currentFormat = currentFormat,
+                    onFormatChanged = { format -> currentFormat = format },
+                    isBurstStack = isBurstStack,
+                    onBurstStackToggled = {
+                        val next = !isBurstStack
+                        isBurstStack = next
+                        cameraController.setBurstStack(next)
+                    },
+                    isLegacyJpeg = isLegacyJpeg,
+                    onLegacyJpegToggled = {
+                        val next = !isLegacyJpeg
+                        isLegacyJpeg = next
+                        cameraController.setLegacyJpegPath(next)
+                    },
+                    isLookPrecision16f = isLookPrecision16f,
+                    onLookPrecision16fToggled = {
+                        val next = !isLookPrecision16f
+                        isLookPrecision16f = next
+                        cameraController.setLookPrecision16f(next)
+                        rendererRef?.setLookPrecision16f(next)
+                    },
+                    isPreviewBufferHd = isPreviewBufferHd,
+                    onPreviewBufferHdToggled = {
+                        val next = !isPreviewBufferHd
+                        isPreviewBufferHd = next
+                        cameraController.setPreviewBufferHd(next)
+                    },
+                    showGpuOverlay = showGpuOverlay,
+                    onShowGpuOverlayToggled = {
+                        showGpuOverlay = !showGpuOverlay
+                    },
+                    dxStage = dxStage,
+                    dxBlendMode = blendMode,
+                    onBlendModeSelected = { mode ->
+                        blendMode = mode
+                        rendererRef?.dxBlendMode = mode.modeId
+                    },
+                    dxOpacity = opacity,
+                    onOpacityChanged = { op ->
+                        opacity = op
+                        rendererRef?.dxOpacity = op
+                    },
+                    dxIsFlipped = isFlipped,
+                    onFlipToggled = {
+                        isFlipped = !isFlipped
+                        rendererRef?.dxFlipFirst = isFlipped
+                    },
+                    onRetakeClicked = {
+                        rendererRef?.retakeFirstExposure()
+                        cameraController.setAeAwbLock(false)
+                        isAeAfLocked = false
+                        evBias = 0.0f
+                        cameraController.setExposureCompensation(0f)
+                    },
+                    onClose = { isDrawerOpen = false }
+                )
+            }
+        }
+
+        // 8. Fullscreen In-App Photo Viewer Dialog
+        if (isPhotoViewerOpen && lastCapturedUri != null) {
+            PhotoViewerDialog(
+                photoUri = lastCapturedUri,
+                onDismiss = { isPhotoViewerOpen = false },
+                onPhotoDeleted = {
+                    isPhotoViewerOpen = false
+                    lastCapturedThumbnail = null
+                    lastCapturedUri = null
+                    coroutineScope.launch(Dispatchers.IO) {
+                        val newLatest = CaptureSaver.getLatestCaptureUri(context)
+                        val newThumb = newLatest?.let { CaptureSaver.loadThumbnail(context, it) }
+                        withContext(Dispatchers.Main) {
+                            lastCapturedUri = newLatest
+                            lastCapturedThumbnail = newThumb
+                        }
                     }
-                },
-                onResetToDefaultLut = {
-                    val (name, cube) = lutManager.resetToDefault()
-                    activeLutName = name
-                    rendererRef?.updateLutCube(cube)
-                },
-                lookIntensity = lookIntensity,
-                onLookIntensityChanged = { intensity ->
-                    lookIntensity = intensity
-                    rendererRef?.lookIntensity = intensity
-                },
-                lookHalation = lookHalation,
-                onLookHalationChanged = { halo ->
-                    lookHalation = halo
-                    rendererRef?.lookHalation = halo
-                },
-                temporalEchoDecay = temporalEchoDecay,
-                onTemporalEchoDecayChanged = { decay ->
-                    temporalEchoDecay = decay
-                    rendererRef?.temporalEchoDecay = decay
-                },
-                motionThreshold = motionThreshold,
-                onMotionThresholdChanged = { thresh ->
-                    motionThreshold = thresh
-                    rendererRef?.motionThreshold = thresh
-                },
-                lightTrailDecay = lightTrailDecay,
-                onLightTrailDecayChanged = { decay ->
-                    lightTrailDecay = decay
-                    rendererRef?.lightTrailDecay = decay
-                },
-                lightTrailBlendMode = lightTrailBlendMode,
-                onLightTrailBlendModeChanged = { mode ->
-                    lightTrailBlendMode = mode
-                    rendererRef?.lightTrailBlendMode = mode
-                },
-                chromaticAberration = chromaticAberration,
-                onChromaticAberrationChanged = { ca ->
-                    chromaticAberration = ca
-                    rendererRef?.chromaticAberrationIntensity = ca
-                },
-                onClearLightTrails = {
-                    rendererRef?.clearLightTrails()
-                },
-                currentWheelParam = currentWheelParam,
-                onSelectWheelParam = { param ->
-                    currentWheelParam = param
-                },
-                evBias = evBias,
-                onEvBiasChanged = { ev ->
-                    evBias = ev
-                    cameraController.setExposureCompensation(ev)
-                },
-                currentFormat = currentFormat,
-                onFormatChanged = { format -> currentFormat = format },
-                isBurstStack = isBurstStack,
-                onBurstStackToggled = {
-                    val next = !isBurstStack
-                    isBurstStack = next
-                    cameraController.setBurstStack(next)
-                },
-                isLegacyJpeg = isLegacyJpeg,
-                onLegacyJpegToggled = {
-                    val next = !isLegacyJpeg
-                    isLegacyJpeg = next
-                    cameraController.setLegacyJpegPath(next)
-                },
-                isLookPrecision16f = isLookPrecision16f,
-                onLookPrecision16fToggled = {
-                    val next = !isLookPrecision16f
-                    isLookPrecision16f = next
-                    cameraController.setLookPrecision16f(next)
-                    rendererRef?.setLookPrecision16f(next)
-                },
-                isPreviewBufferHd = isPreviewBufferHd,
-                onPreviewBufferHdToggled = {
-                    val next = !isPreviewBufferHd
-                    isPreviewBufferHd = next
-                    cameraController.setPreviewBufferHd(next)
-                },
-                showGpuOverlay = showGpuOverlay,
-                onShowGpuOverlayToggled = {
-                    showGpuOverlay = !showGpuOverlay
-                },
-                dxStage = dxStage,
-                dxBlendMode = blendMode,
-                onBlendModeSelected = { mode ->
-                    blendMode = mode
-                    rendererRef?.dxBlendMode = mode.modeId
-                },
-                dxOpacity = opacity,
-                onOpacityChanged = { op ->
-                    opacity = op
-                    rendererRef?.dxOpacity = op
-                },
-                dxIsFlipped = isFlipped,
-                onFlipToggled = {
-                    isFlipped = !isFlipped
-                    rendererRef?.dxFlipFirst = isFlipped
-                },
-                onRetakeClicked = {
-                    rendererRef?.retakeFirstExposure()
-                    cameraController.setAeAwbLock(false)
-                    evBias = 0.0f
-                    cameraController.setExposureCompensation(0f)
                 }
             )
         }
@@ -698,15 +813,15 @@ fun GpuTelemetryOverlay(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        color = Color(0xCC0A0A0A),
+        color = Color(0xCC0C0D0F),
         shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, Color(0x3300E5FF)),
+        border = BorderStroke(1.dp, SlateBorder),
         modifier = modifier
     ) {
         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
             Text(
-                text = "⚡ GPU PROFILER",
-                color = AuroraCyan,
+                text = "GPU TELEMETRY",
+                color = AmberGold,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace
@@ -714,25 +829,25 @@ fun GpuTelemetryOverlay(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = "FPS: ${"%.1f".format(telemetry.fps)} (${"%.1f".format(telemetry.frameTimeMs)}ms)",
-                color = if (telemetry.fps >= 55f) Color(0xFF69F0AE) else Color(0xFFFFD54F),
+                color = if (telemetry.fps >= 24f) StatusGreen else StatusRed,
                 fontSize = 8.sp,
                 fontFamily = FontFamily.Monospace
             )
             Text(
                 text = "GPU FX: ${"%.1f".format(telemetry.gpuEffectsTimeMs)}ms",
-                color = Color.White.copy(alpha = 0.85f),
+                color = White.copy(alpha = 0.85f),
                 fontSize = 8.sp,
                 fontFamily = FontFamily.Monospace
             )
             Text(
                 text = "RES: ${telemetry.previewWidth}x${telemetry.previewHeight}",
-                color = Color.White.copy(alpha = 0.85f),
+                color = White.copy(alpha = 0.85f),
                 fontSize = 8.sp,
                 fontFamily = FontFamily.Monospace
             )
             Text(
                 text = "FBO: ${if (telemetry.isHalfFloat) "16-Bit Float" else "8-Bit RGBA"} | Buffers: ${telemetry.historyBufferCount}",
-                color = Color.White.copy(alpha = 0.7f),
+                color = TextSecondary,
                 fontSize = 8.sp,
                 fontFamily = FontFamily.Monospace
             )

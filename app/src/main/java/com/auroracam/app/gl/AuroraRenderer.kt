@@ -293,12 +293,17 @@ class AuroraRenderer(
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        val st = surfaceTexture ?: return
+        try {
+            val st = surfaceTexture ?: return
 
         synchronized(this) {
             if (isFrameAvailable) {
-                st.updateTexImage()
-                st.getTransformMatrix(transformMatrix)
+                try {
+                    st.updateTexImage()
+                    st.getTransformMatrix(transformMatrix)
+                } catch (e: Exception) {
+                    Log.w(TAG, "updateTexImage failed during surface transition: ${e.message}")
+                }
                 isFrameAvailable = false
             }
         }
@@ -516,6 +521,9 @@ class AuroraRenderer(
             }
             frameCount = 0
             lastStatsLogTimeMs = now
+        }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Transient frame drop in onDrawFrame: ${t.message}")
         }
     }
 
@@ -1107,21 +1115,22 @@ class AuroraRenderer(
         val bitmap = Bitmap.createBitmap(fbo.width, fbo.height, Bitmap.Config.ARGB_8888)
         bitmap.copyPixelsFromBuffer(buffer)
 
-        // Sample average luma of readback bitmap
+        // Sample average luma directly from buffer bytes with zero bitmap JNI overhead
         var lumaSum = 0L
         var samples = 0
-        val bw = bitmap.width
-        val bh = bitmap.height
-        val rowPixels = IntArray(bw)
+        val bw = fbo.width
+        val bh = fbo.height
+        val rowBytes = bw * 4
+        val tempRow = ByteArray(rowBytes)
         for (y in 0 until bh step 10) {
-            bitmap.getPixels(rowPixels, 0, bw, 0, y, bw, 1)
+            buffer.position(y * rowBytes)
+            buffer.get(tempRow, 0, rowBytes)
             for (x in 0 until bw step 10) {
-                val c = rowPixels[x]
-                val r = (c shr 16) and 0xFF
-                val g = (c shr 8) and 0xFF
-                val b = c and 0xFF
-                val luma = (0.299f * r + 0.587f * g + 0.114f * b).toInt()
-                lumaSum += luma
+                val idx = x * 4
+                val r = tempRow[idx].toInt() and 0xFF
+                val g = tempRow[idx + 1].toInt() and 0xFF
+                val b = tempRow[idx + 2].toInt() and 0xFF
+                lumaSum += ((r * 77 + g * 150 + b * 29) shr 8)
                 samples++
             }
         }
@@ -1130,7 +1139,11 @@ class AuroraRenderer(
 
         return if (flipY) {
             val matrix = android.graphics.Matrix().apply { postScale(1.0f, -1.0f) }
-            Bitmap.createBitmap(bitmap, 0, 0, fbo.width, fbo.height, matrix, true)
+            val flipped = Bitmap.createBitmap(bitmap, 0, 0, fbo.width, fbo.height, matrix, true)
+            if (flipped != bitmap) {
+                bitmap.recycle()
+            }
+            flipped
         } else {
             bitmap
         }
