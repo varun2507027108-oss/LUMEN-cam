@@ -15,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -288,7 +289,7 @@ fun CameraScreen() {
             }
         )
 
-        // 4. Ultra-Minimal Top HUD Bar
+        // 4. Ultra-Minimal Top HUD Bar with Look Quick-Switcher
         CameraTopBar(
             currentFps = currentFps,
             isHdrEnabled = isBurstStack,
@@ -296,6 +297,25 @@ fun CameraScreen() {
                 val next = !isBurstStack
                 isBurstStack = next
                 cameraController.setBurstStack(next)
+            },
+            activeLutName = activeLutName,
+            isLookEnabled = isLookEnabled,
+            onSelectPreset = { preset ->
+                val (name, cube) = lutManager.selectPreset(preset)
+                activeLutName = name
+                rendererRef?.updateLutCube(cube)
+            },
+            onLookEnabledChanged = { enabled ->
+                isLookEnabled = enabled
+                rendererRef?.isLookEnabled = enabled
+            },
+            cachedLuts = cachedLutsList,
+            onSelectCachedLut = { file ->
+                coroutineScope.launch {
+                    val (name, cube) = lutManager.selectCachedLut(file)
+                    activeLutName = name
+                    rendererRef?.updateLutCube(cube)
+                }
             },
             cameraMode = cameraMode,
             dxStage = dxStage,
@@ -324,7 +344,7 @@ fun CameraScreen() {
             )
         }
 
-        // 6. Bottom Controls: Shutter Bar -> Consolidated Creative Drawer
+        // 6. Bottom Controls: Quick Looks Snapping Dial + Shutter Bar Dock
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -332,7 +352,25 @@ fun CameraScreen() {
                 .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Shutter Bar (In-App Gallery Thumbnail | Big Shutter | Creative Drawer Toggle)
+            // Direct-Access "Looks / LUTs" Snapping Dial (Positioned right above the Shutter Dock in standard mode)
+            if (!isDrawerOpen && cameraMode == CameraMode.STANDARD) {
+                QuickLooksDial(
+                    activeLutName = activeLutName,
+                    isLookEnabled = isLookEnabled,
+                    onSelectPreset = { preset ->
+                        val (name, cube) = lutManager.selectPreset(preset)
+                        activeLutName = name
+                        rendererRef?.updateLutCube(cube)
+                    },
+                    onLookEnabledChanged = { enabled ->
+                        isLookEnabled = enabled
+                        rendererRef?.isLookEnabled = enabled
+                    }
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+
+            // Shutter Bar (In-App Gallery Thumbnail | Big Mechanical Shutter | Creative Controls Toggle)
             CameraShutterBar(
                 isCapturing = isCapturing,
                 lastCapturedThumbnail = lastCapturedThumbnail,
@@ -619,16 +657,31 @@ fun CameraScreen() {
                     }
                 }
             )
+        }
 
-            Spacer(modifier = Modifier.height(4.dp))
+        // 7. Modal Creative Controls Drawer with Viewfinder Scrim
+        if (isDrawerOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.50f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        isDrawerOpen = false
+                    }
+            )
+        }
 
-            // 7. Consolidated Creative Drawer (Modes, Looks, Smooth Effects, Pro Options)
-            AnimatedVisibility(
-                visible = isDrawerOpen,
-                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
-            ) {
-                CreativeDrawer(
+        // Consolidated Creative Controls Drawer (Modes, Looks, Smooth Effects, Pro Options)
+        AnimatedVisibility(
+            visible = isDrawerOpen,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+        ) {
+            CreativeDrawer(
                     cameraMode = cameraMode,
                     onModeChanged = { mode ->
                         cameraMode = mode
@@ -779,7 +832,6 @@ fun CameraScreen() {
                     onClose = { isDrawerOpen = false }
                 )
             }
-        }
 
         // 8. Fullscreen In-App Photo Viewer Dialog
         if (isPhotoViewerOpen && lastCapturedUri != null) {

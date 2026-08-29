@@ -13,47 +13,50 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.auroracam.app.ui.theme.AmberGold
-import com.auroracam.app.ui.theme.AmberGoldDim
-import com.auroracam.app.ui.theme.DarkSurface
-import com.auroracam.app.ui.theme.SlateBorder
-import com.auroracam.app.ui.theme.StatusGreen
-import com.auroracam.app.ui.theme.StatusRed
-import com.auroracam.app.ui.theme.TextMuted
-import com.auroracam.app.ui.theme.TextSecondary
-import com.auroracam.app.ui.theme.White
+import com.auroracam.app.ui.theme.GlassBorder
+import com.auroracam.app.ui.theme.NeutralSlate
+import com.auroracam.app.ui.theme.PureWhite
+import com.auroracam.app.ui.theme.SmokedChipBg
+import com.auroracam.app.ui.theme.WarmAmber
+import com.auroracam.app.ui.theme.WarmAmberDim
+import java.io.File
 
 /**
- * Minimalist Cinema HUD Top Bar.
+ * Leica / Hasselblad Minimalist Diagnostic Top Bar Strip.
  *
- * Provides:
- * 1. Live FPS badge + dedicated, interactive HDR pill toggle.
- * 2. Aspect Ratio badge (4:3, 1:1, XPAN).
- * 3. Double Exposure status or Manual PRO Exposure badge.
+ * 1. Inset-aware with statusBarsPadding() + horizontal 16.dp, vertical 8.dp padding.
+ * 2. Semi-transparent dark chips (Color(0x66000000) with 1.dp border Color(0x33FFFFFF)).
+ * 3. Tabular monospaced technical metadata:
+ *    [ 24 FPS ]  (Technical white/slate font, no misleading red dot)
+ *    [ HDR ]     (Toggled active state uses Warm Amber border/text)
+ *    [ 4:3 ]     (Aspect ratio switcher)
+ *    [ AUTO ] or [ PRO ] (Exposure mode)
  */
 @Composable
 fun CameraTopBar(
     currentFps: Double,
     isHdrEnabled: Boolean,
     onHdrToggled: () -> Unit,
+    activeLutName: String,
+    isLookEnabled: Boolean,
+    onSelectPreset: (String) -> Unit,
+    onLookEnabledChanged: (Boolean) -> Unit,
+    cachedLuts: List<File> = emptyList(),
+    onSelectCachedLut: (File) -> Unit = {},
     cameraMode: CameraMode,
     dxStage: DxStage,
     currentFormat: FormatMode,
@@ -68,49 +71,42 @@ fun CameraTopBar(
         modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left: FPS & Interactive HDR Button
+        // Left: Diagnostic FPS & HDR Toggles
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // FPS Pill
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+            // [ 24 FPS ] (Clean technical monospaced chip without deceptive red dot)
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(com.auroracam.app.ui.theme.SmokedGlass)
-                    .border(1.dp, com.auroracam.app.ui.theme.GlassHighlight, RoundedCornerShape(14.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.5.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SmokedChipBg)
+                    .border(1.dp, GlassBorder, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.5.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(if (currentFps >= 24.0) com.auroracam.app.ui.theme.FocusMint else com.auroracam.app.ui.theme.SignalRuby)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = "${"%.0f".format(currentFps)} FPS",
-                    color = com.auroracam.app.ui.theme.TelemetryCobalt,
+                    color = NeutralSlate,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = FontFamily.Monospace
                 )
             }
 
-            // Dedicated Interactive HDR Button
+            // [ HDR ] (Interactive toggle pill)
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (isHdrEnabled) com.auroracam.app.ui.theme.SolarGoldDim else com.auroracam.app.ui.theme.SmokedGlass)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (isHdrEnabled) WarmAmberDim else SmokedChipBg)
                     .border(
                         1.dp,
-                        if (isHdrEnabled) com.auroracam.app.ui.theme.SolarGold else com.auroracam.app.ui.theme.GlassHighlight,
-                        RoundedCornerShape(14.dp)
+                        if (isHdrEnabled) WarmAmber else GlassBorder,
+                        RoundedCornerShape(12.dp)
                     )
                     .clickable {
                         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -121,7 +117,7 @@ fun CameraTopBar(
             ) {
                 Text(
                     text = "HDR",
-                    color = if (isHdrEnabled) com.auroracam.app.ui.theme.SolarGold else TextSecondary,
+                    color = if (isHdrEnabled) WarmAmber else NeutralSlate,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
@@ -129,84 +125,70 @@ fun CameraTopBar(
             }
         }
 
-        // Center: Format Badge (4:3, 1:1, XPAN)
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        // Center: Aspect Ratio [ 4:3 ] / [ 1:1 ] / [ XPAN ]
+        Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(14.dp))
-                .background(com.auroracam.app.ui.theme.SmokedGlass)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (currentFormat == FormatMode.XPAN) WarmAmberDim else SmokedChipBg)
                 .border(
                     1.dp,
-                    if (currentFormat == FormatMode.XPAN) com.auroracam.app.ui.theme.SolarGold else com.auroracam.app.ui.theme.GlassHighlight,
-                    RoundedCornerShape(14.dp)
+                    if (currentFormat == FormatMode.XPAN) WarmAmber else GlassBorder,
+                    RoundedCornerShape(12.dp)
                 )
                 .clickable {
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                     onFormatClicked()
                 }
-                .padding(horizontal = 10.dp, vertical = 4.5.dp)
+                .padding(horizontal = 9.dp, vertical = 4.5.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Default.Crop,
-                contentDescription = "Aspect Ratio",
-                tint = if (currentFormat == FormatMode.XPAN) com.auroracam.app.ui.theme.SolarGold else com.auroracam.app.ui.theme.OpticCyan,
-                modifier = Modifier.size(12.dp)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
             Text(
                 text = currentFormat.label,
-                color = if (currentFormat == FormatMode.XPAN) com.auroracam.app.ui.theme.SolarGold else White,
+                color = if (currentFormat == FormatMode.XPAN) WarmAmber else PureWhite,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 fontFamily = FontFamily.Monospace
             )
         }
 
-        // Right: Double Exposure Stage or Manual Pro Exposure Toggle
+        // Right: [ AUTO ] / [ PRO ] or Double Exposure Stage
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .clip(RoundedCornerShape(14.dp))
-                .background(if (isManualExposureEnabled) com.auroracam.app.ui.theme.SolarGoldDim else com.auroracam.app.ui.theme.SmokedGlass)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (isManualExposureEnabled) WarmAmberDim else SmokedChipBg)
                 .border(
                     1.dp,
-                    if (isManualExposureEnabled) com.auroracam.app.ui.theme.SolarGold else com.auroracam.app.ui.theme.GlassHighlight,
-                    RoundedCornerShape(14.dp)
+                    if (isManualExposureEnabled) WarmAmber else GlassBorder,
+                    RoundedCornerShape(12.dp)
                 )
                 .clickable {
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                     onManualExposureToggled()
                 }
-                .padding(horizontal = 10.dp, vertical = 4.5.dp)
+                .padding(horizontal = 9.dp, vertical = 4.5.dp)
         ) {
             if (cameraMode == CameraMode.DOUBLE_EXPOSURE) {
                 if (dxStage == DxStage.STAGE_2_LOCKED) {
                     Icon(
                         imageVector = Icons.Default.Lock,
                         contentDescription = null,
-                        tint = com.auroracam.app.ui.theme.FocusMint,
+                        tint = WarmAmber,
                         modifier = Modifier.size(11.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                 }
                 Text(
                     text = if (dxStage == DxStage.STAGE_1_EMPTY) "1/2 BASE" else "2/2 LOCKED",
-                    color = if (dxStage == DxStage.STAGE_1_EMPTY) White else com.auroracam.app.ui.theme.FocusMint,
-                    fontSize = 10.sp,
+                    color = if (dxStage == DxStage.STAGE_1_EMPTY) PureWhite else WarmAmber,
+                    fontSize = 10.5.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
                 )
             } else {
-                Icon(
-                    imageVector = Icons.Default.Tune,
-                    contentDescription = null,
-                    tint = if (isManualExposureEnabled) AmberGold else TextSecondary,
-                    modifier = Modifier.size(12.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = if (isManualExposureEnabled) "PRO 1/2s" else "AUTO",
-                    color = if (isManualExposureEnabled) AmberGold else White,
+                    text = if (isManualExposureEnabled) "PRO" else "AUTO",
+                    color = if (isManualExposureEnabled) WarmAmber else PureWhite,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = FontFamily.Monospace

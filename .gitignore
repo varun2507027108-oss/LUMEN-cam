@@ -19,4 +19,5 @@ signing.properties
 secret.properties
 google-services.json
 *.log
+graphify-out/
 

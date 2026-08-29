@@ -2,6 +2,8 @@ package com.auroracam.app.ui
 
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -24,10 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Flare
 import androidx.compose.material.icons.filled.FolderOpen
@@ -36,13 +36,11 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -61,30 +59,31 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auroracam.app.capture.LutManager
-import com.auroracam.app.ui.theme.AmberGold
-import com.auroracam.app.ui.theme.AmberGoldDim
-import com.auroracam.app.ui.theme.DarkBackground
-import com.auroracam.app.ui.theme.DarkSurface
-import com.auroracam.app.ui.theme.ElevatedSurface
-import com.auroracam.app.ui.theme.SlateBorder
+import com.auroracam.app.ui.theme.BorderHairline
+import com.auroracam.app.ui.theme.NeutralSlate
+import com.auroracam.app.ui.theme.PureWhite
+import com.auroracam.app.ui.theme.SurfaceActiveCard
+import com.auroracam.app.ui.theme.SurfaceDark
+import com.auroracam.app.ui.theme.SurfaceElevated
 import com.auroracam.app.ui.theme.TextMuted
-import com.auroracam.app.ui.theme.TextSecondary
-import com.auroracam.app.ui.theme.White
+import com.auroracam.app.ui.theme.WarmAmber
+import com.auroracam.app.ui.theme.WarmAmberDim
 import java.io.File
 
-enum class ShelfTab(val title: String, val accentColor: Color) {
-    MODES("MODES", com.auroracam.app.ui.theme.SolarGold),
-    LOOKS("LOOKS", com.auroracam.app.ui.theme.LookWarmth),
-    EFFECTS("EFFECTS", com.auroracam.app.ui.theme.OpticCyan),
-    PRO("PRO", com.auroracam.app.ui.theme.FocusMint)
+enum class ShelfTab(val title: String) {
+    MODES("MODES"),
+    LOOKS("LOOKS"),
+    EFFECTS("EFFECTS"),
+    PRO("PRO")
 }
 
 /**
- * Minimalist Cinema Control Drawer.
+ * Leica / Hasselblad Compact Creative Controls Bottom Sheet.
  *
- * Elegantly groups Camera Modes (Standard, Temporal, Motion, Double Exp, Light Trails),
- * Film LUT Color Grading, Rotary Effect Tuning, and Pro Architecture Options
- * into an ergonomic panel positioned safely above Android system gestures.
+ * 1. Height constrained to <= 35% screen height (~280dp) so viewfinder remains open for framing.
+ * 2. Single minimal drag handle at the top + tap outside to dismiss (no floating yellow X).
+ * 3. Monochromatic segmented tab strip with animated Warm Amber indicator underline.
+ * 4. Monochromatic mode selection cards with clean active state (SurfaceActiveCard + 1.dp WarmAmber border).
  */
 @Composable
 fun CreativeDrawer(
@@ -155,89 +154,63 @@ fun CreativeDrawer(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(max = 285.dp)
             .navigationBarsPadding()
             .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-            .background(DarkSurface)
-            .border(1.dp, SlateBorder, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .background(SurfaceDark.copy(alpha = 0.96f))
+            .border(1.dp, BorderHairline, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Drawer Header with Grab Handle & Title
+        // Minimal Dismiss Drag Handle
+        Box(
+            modifier = Modifier
+                .padding(vertical = 4.dp)
+                .width(36.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(NeutralSlate.copy(alpha = 0.35f))
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Sleek Segmented Tab Navigation Control
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(currentTab.accentColor)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "CREATIVE CONTROLS",
-                    color = White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 1.sp
-                )
-            }
-
-            // Close button
-            Box(
-                modifier = Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .background(ElevatedSurface)
-                    .clickable {
-                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        onClose()
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Close Drawer",
-                    tint = White,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-        }
-
-        // Tab Navigation Strip
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(ElevatedSurface)
-                .padding(3.dp),
+                .clip(RoundedCornerShape(10.dp))
+                .background(SurfaceElevated)
+                .padding(2.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
             ShelfTab.values().forEach { tab ->
                 val isSelected = currentTab == tab
-                Box(
+                Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(if (isSelected) tab.accentColor else Color.Transparent)
+                        .clip(RoundedCornerShape(8.dp))
                         .clickable {
                             view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                             currentTab = tab
                         }
                         .padding(vertical = 6.dp),
-                    contentAlignment = Alignment.Center
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         text = tab.title,
                         fontSize = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         fontFamily = FontFamily.Monospace,
-                        color = if (isSelected) DarkBackground else TextSecondary
+                        color = if (isSelected) PureWhite else NeutralSlate
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.6f)
+                            .height(2.dp)
+                            .clip(RoundedCornerShape(1.dp))
+                            .background(if (isSelected) WarmAmber else Color.Transparent)
                     )
                 }
             }
@@ -252,7 +225,7 @@ fun CreativeDrawer(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Creative Camera Modes Grid
+                    // Unified Monochromatic Mode Selection Row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -261,23 +234,22 @@ fun CreativeDrawer(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         listOf(
-                            Triple(CameraMode.STANDARD, "Standard", Pair(Icons.Default.CameraAlt, com.auroracam.app.ui.theme.HyperSilver)),
-                            Triple(CameraMode.TEMPORAL_ECHO, "Temporal", Pair(Icons.Default.History, com.auroracam.app.ui.theme.LookNostalgia)),
-                            Triple(CameraMode.MOTION_EXPOSURE, "Motion", Pair(Icons.AutoMirrored.Filled.DirectionsRun, com.auroracam.app.ui.theme.FocusMint)),
-                            Triple(CameraMode.DOUBLE_EXPOSURE, "Double Exp", Pair(Icons.Default.Layers, com.auroracam.app.ui.theme.OpticCyan)),
-                            Triple(CameraMode.LIGHT_TRAILS, "Light Trails", Pair(Icons.Default.Flare, com.auroracam.app.ui.theme.SolarOrange))
-                        ).forEach { (mode, title, iconAndColor) ->
-                            val (icon, modeColor) = iconAndColor
+                            Triple(CameraMode.STANDARD, "Standard", Icons.Default.CameraAlt),
+                            Triple(CameraMode.TEMPORAL_ECHO, "Temporal", Icons.Default.History),
+                            Triple(CameraMode.MOTION_EXPOSURE, "Motion", Icons.AutoMirrored.Filled.DirectionsRun),
+                            Triple(CameraMode.DOUBLE_EXPOSURE, "Double Exp", Icons.Default.Layers),
+                            Triple(CameraMode.LIGHT_TRAILS, "Light Trails", Icons.Default.Flare)
+                        ).forEach { (mode, title, icon) ->
                             val isSelected = cameraMode == mode
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(if (isSelected) modeColor else ElevatedSurface)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) SurfaceActiveCard else SurfaceElevated)
                                     .border(
                                         1.dp,
-                                        if (isSelected) modeColor else SlateBorder,
-                                        RoundedCornerShape(14.dp)
+                                        if (isSelected) WarmAmber else BorderHairline,
+                                        RoundedCornerShape(12.dp)
                                     )
                                     .clickable {
                                         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -288,7 +260,7 @@ fun CreativeDrawer(
                                 Icon(
                                     imageVector = icon,
                                     contentDescription = title,
-                                    tint = if (isSelected) DarkBackground else modeColor,
+                                    tint = if (isSelected) WarmAmber else NeutralSlate,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -296,7 +268,8 @@ fun CreativeDrawer(
                                     text = title,
                                     fontSize = 11.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) DarkBackground else White
+                                    fontFamily = FontFamily.Monospace,
+                                    color = if (isSelected) PureWhite else NeutralSlate
                                 )
                             }
                         }
@@ -317,7 +290,7 @@ fun CreativeDrawer(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Natural / Off chip
+                        // RAW / Natural chip
                         FilterChip(
                             selected = !isLookEnabled,
                             onClick = {
@@ -326,21 +299,21 @@ fun CreativeDrawer(
                             },
                             label = { Text("RAW / Natural", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = AmberGold,
-                                selectedLabelColor = DarkBackground,
-                                containerColor = ElevatedSurface,
-                                labelColor = TextSecondary
+                                selectedContainerColor = WarmAmber,
+                                selectedLabelColor = SurfaceDark,
+                                containerColor = SurfaceElevated,
+                                labelColor = NeutralSlate
                             ),
                             border = FilterChipDefaults.filterChipBorder(
                                 enabled = true,
                                 selected = !isLookEnabled,
-                                borderColor = SlateBorder,
-                                selectedBorderColor = AmberGold
+                                borderColor = BorderHairline,
+                                selectedBorderColor = WarmAmber
                             ),
-                            modifier = Modifier.height(30.dp)
+                            modifier = Modifier.height(28.dp)
                         )
 
-                        // Built-in presets
+                        // Built-in procedural presets
                         LutManager.BUILTIN_PRESETS.forEach { preset ->
                             val isSelected = isLookEnabled && activeLutName == preset
                             FilterChip(
@@ -359,18 +332,18 @@ fun CreativeDrawer(
                                     )
                                 },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = AmberGold,
-                                    selectedLabelColor = DarkBackground,
-                                    containerColor = ElevatedSurface,
-                                    labelColor = White
+                                    selectedContainerColor = WarmAmber,
+                                    selectedLabelColor = SurfaceDark,
+                                    containerColor = SurfaceElevated,
+                                    labelColor = PureWhite
                                 ),
                                 border = FilterChipDefaults.filterChipBorder(
                                     enabled = true,
                                     selected = isSelected,
-                                    borderColor = SlateBorder,
-                                    selectedBorderColor = AmberGold
+                                    borderColor = BorderHairline,
+                                    selectedBorderColor = WarmAmber
                                 ),
-                                modifier = Modifier.height(30.dp)
+                                modifier = Modifier.height(28.dp)
                             )
                         }
 
@@ -385,7 +358,7 @@ fun CreativeDrawer(
                                         Icon(
                                             imageVector = Icons.Default.FileUpload,
                                             contentDescription = "Import",
-                                            tint = if (isCustomActive) DarkBackground else AmberGold,
+                                            tint = if (isCustomActive) SurfaceDark else WarmAmber,
                                             modifier = Modifier.size(12.dp)
                                         )
                                         Spacer(modifier = Modifier.width(3.dp))
@@ -397,35 +370,36 @@ fun CreativeDrawer(
                                     }
                                 },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = AmberGold,
-                                    selectedLabelColor = DarkBackground,
-                                    containerColor = ElevatedSurface,
-                                    labelColor = AmberGold
+                                    selectedContainerColor = WarmAmber,
+                                    selectedLabelColor = SurfaceDark,
+                                    containerColor = SurfaceElevated,
+                                    labelColor = WarmAmber
                                 ),
                                 border = FilterChipDefaults.filterChipBorder(
                                     enabled = true,
                                     selected = isCustomActive,
-                                    borderColor = SlateBorder,
-                                    selectedBorderColor = AmberGold
+                                    borderColor = BorderHairline,
+                                    selectedBorderColor = WarmAmber
                                 ),
-                                modifier = Modifier.height(30.dp)
+                                modifier = Modifier.height(28.dp)
                             )
 
                             DropdownMenu(
                                 expanded = showCustomLutMenu,
-                                onDismissRequest = { showCustomLutMenu = false }
+                                onDismissRequest = { showCustomLutMenu = false },
+                                modifier = Modifier.background(SurfaceDark)
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Import .cube file...") },
-                                    leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null, tint = AmberGold) },
+                                    text = { Text("Import .cube file...", color = PureWhite, fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
+                                    leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null, tint = WarmAmber) },
                                     onClick = {
                                         onPickLutFile()
                                         showCustomLutMenu = false
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Generate test LUTs (Mono, Invert)") },
-                                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = White) },
+                                    text = { Text("Generate test LUTs (Mono, Invert)", color = PureWhite, fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
+                                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = PureWhite) },
                                     onClick = {
                                         onGenerateDebugLuts()
                                         showCustomLutMenu = false
@@ -433,14 +407,14 @@ fun CreativeDrawer(
                                 )
                                 if (availableLuts.isNotEmpty()) {
                                     DropdownMenuItem(
-                                        text = { Text("Cached LUTs:", color = TextSecondary, fontSize = 11.sp) },
+                                        text = { Text("Cached LUTs:", color = NeutralSlate, fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                                         onClick = {},
                                         enabled = false
                                     )
                                     availableLuts.forEach { file ->
                                         DropdownMenuItem(
-                                            text = { Text(file.nameWithoutExtension) },
-                                            leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null, tint = AmberGold) },
+                                            text = { Text(file.nameWithoutExtension, color = PureWhite, fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
+                                            leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null, tint = WarmAmber) },
                                             onClick = {
                                                 onSelectCachedLut(file)
                                                 showCustomLutMenu = false
@@ -459,7 +433,7 @@ fun CreativeDrawer(
                     ) {
                         Text(
                             text = "Mix ${(lookIntensity * 100).toInt()}%",
-                            color = TextSecondary,
+                            color = NeutralSlate,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
                             modifier = Modifier.width(68.dp)
@@ -470,11 +444,11 @@ fun CreativeDrawer(
                             valueRange = 0.0f..1.0f,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(22.dp),
+                                .height(20.dp),
                             colors = SliderDefaults.colors(
-                                thumbColor = AmberGold,
-                                activeTrackColor = AmberGold,
-                                inactiveTrackColor = ElevatedSurface
+                                thumbColor = WarmAmber,
+                                activeTrackColor = WarmAmber,
+                                inactiveTrackColor = SurfaceElevated
                             )
                         )
                     }
@@ -485,7 +459,7 @@ fun CreativeDrawer(
                     ) {
                         Text(
                             text = "Glow ${(lookHalation * 100).toInt()}%",
-                            color = TextSecondary,
+                            color = NeutralSlate,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
                             modifier = Modifier.width(68.dp)
@@ -496,11 +470,11 @@ fun CreativeDrawer(
                             valueRange = 0.0f..0.60f,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(22.dp),
+                                .height(20.dp),
                             colors = SliderDefaults.colors(
-                                thumbColor = AmberGold,
-                                activeTrackColor = AmberGold,
-                                inactiveTrackColor = ElevatedSurface
+                                thumbColor = WarmAmber,
+                                activeTrackColor = WarmAmber,
+                                inactiveTrackColor = SurfaceElevated
                             )
                         )
                     }
@@ -539,7 +513,7 @@ fun CreativeDrawer(
 
                     // Contextual Double Exposure controls
                     if (cameraMode == CameraMode.DOUBLE_EXPOSURE) {
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -554,16 +528,16 @@ fun CreativeDrawer(
                                     onClick = { onBlendModeSelected(mode) },
                                     label = { Text(mode.label, fontSize = 9.sp, fontFamily = FontFamily.Monospace) },
                                     colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = AmberGold,
-                                        selectedLabelColor = DarkBackground,
-                                        containerColor = ElevatedSurface,
-                                        labelColor = White
+                                        selectedContainerColor = WarmAmber,
+                                        selectedLabelColor = SurfaceDark,
+                                        containerColor = SurfaceElevated,
+                                        labelColor = PureWhite
                                     ),
                                     border = FilterChipDefaults.filterChipBorder(
                                         enabled = true,
                                         selected = isSelected,
-                                        borderColor = SlateBorder,
-                                        selectedBorderColor = AmberGold
+                                        borderColor = BorderHairline,
+                                        selectedBorderColor = WarmAmber
                                     ),
                                     modifier = Modifier.height(26.dp)
                                 )
@@ -573,7 +547,7 @@ fun CreativeDrawer(
 
                     // Contextual Light Trails controls
                     if (cameraMode == CameraMode.LIGHT_TRAILS) {
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -586,18 +560,18 @@ fun CreativeDrawer(
                                     onClick = { onLightTrailBlendModeChanged(modeId) },
                                     label = { Text(label, fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                                     colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = AmberGold,
-                                        selectedLabelColor = DarkBackground,
-                                        containerColor = ElevatedSurface,
-                                        labelColor = White
+                                        selectedContainerColor = WarmAmber,
+                                        selectedLabelColor = SurfaceDark,
+                                        containerColor = SurfaceElevated,
+                                        labelColor = PureWhite
                                     ),
                                     border = FilterChipDefaults.filterChipBorder(
                                         enabled = true,
                                         selected = isSelected,
-                                        borderColor = SlateBorder,
-                                        selectedBorderColor = AmberGold
+                                        borderColor = BorderHairline,
+                                        selectedBorderColor = WarmAmber
                                     ),
-                                    modifier = Modifier.height(28.dp)
+                                    modifier = Modifier.height(26.dp)
                                 )
                             }
 
@@ -606,22 +580,22 @@ fun CreativeDrawer(
                                 onClick = onClearLightTrails,
                                 label = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.RestartAlt, contentDescription = null, tint = AmberGold, modifier = Modifier.size(12.dp))
+                                        Icon(Icons.Default.RestartAlt, contentDescription = null, tint = WarmAmber, modifier = Modifier.size(12.dp))
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text("Reset", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                                     }
                                 },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    containerColor = AmberGoldDim,
-                                    labelColor = AmberGold
+                                    containerColor = WarmAmberDim,
+                                    labelColor = WarmAmber
                                 ),
                                 border = FilterChipDefaults.filterChipBorder(
                                     enabled = true,
                                     selected = false,
-                                    borderColor = AmberGold.copy(alpha = 0.4f),
-                                    selectedBorderColor = AmberGold
+                                    borderColor = WarmAmber.copy(alpha = 0.4f),
+                                    selectedBorderColor = WarmAmber
                                 ),
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(26.dp)
                             )
                         }
                     }
@@ -639,7 +613,7 @@ fun CreativeDrawer(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("FORMAT", color = TextSecondary, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(70.dp))
+                        Text("FORMAT", color = NeutralSlate, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(64.dp))
                         FormatMode.values().forEach { mode ->
                             val isSelected = currentFormat == mode
                             FilterChip(
@@ -647,18 +621,18 @@ fun CreativeDrawer(
                                 onClick = { onFormatChanged(mode) },
                                 label = { Text(mode.label, fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = AmberGold,
-                                    selectedLabelColor = DarkBackground,
-                                    containerColor = ElevatedSurface,
-                                    labelColor = White
+                                    selectedContainerColor = WarmAmber,
+                                    selectedLabelColor = SurfaceDark,
+                                    containerColor = SurfaceElevated,
+                                    labelColor = PureWhite
                                 ),
                                 border = FilterChipDefaults.filterChipBorder(
                                     enabled = true,
                                     selected = isSelected,
-                                    borderColor = SlateBorder,
-                                    selectedBorderColor = AmberGold
+                                    borderColor = BorderHairline,
+                                    selectedBorderColor = WarmAmber
                                 ),
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(26.dp)
                             )
                         }
                     }
@@ -676,18 +650,18 @@ fun CreativeDrawer(
                             onClick = onLookPrecision16fToggled,
                             label = { Text(if (isLookPrecision16f) "16-Bit Float FBO" else "8-Bit RGBA", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = AmberGold,
-                                selectedLabelColor = DarkBackground,
-                                containerColor = ElevatedSurface,
-                                labelColor = White
+                                selectedContainerColor = WarmAmber,
+                                selectedLabelColor = SurfaceDark,
+                                containerColor = SurfaceElevated,
+                                labelColor = PureWhite
                             ),
                             border = FilterChipDefaults.filterChipBorder(
                                 enabled = true,
                                 selected = isLookPrecision16f,
-                                borderColor = SlateBorder,
-                                selectedBorderColor = AmberGold
+                                borderColor = BorderHairline,
+                                selectedBorderColor = WarmAmber
                             ),
-                            modifier = Modifier.height(28.dp)
+                            modifier = Modifier.height(26.dp)
                         )
 
                         FilterChip(
@@ -695,18 +669,18 @@ fun CreativeDrawer(
                             onClick = onPreviewBufferHdToggled,
                             label = { Text(if (isPreviewBufferHd) "HD Viewfinder" else "Standard Viewfinder", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = AmberGold,
-                                selectedLabelColor = DarkBackground,
-                                containerColor = ElevatedSurface,
-                                labelColor = White
+                                selectedContainerColor = WarmAmber,
+                                selectedLabelColor = SurfaceDark,
+                                containerColor = SurfaceElevated,
+                                labelColor = PureWhite
                             ),
                             border = FilterChipDefaults.filterChipBorder(
                                 enabled = true,
                                 selected = isPreviewBufferHd,
-                                borderColor = SlateBorder,
-                                selectedBorderColor = AmberGold
+                                borderColor = BorderHairline,
+                                selectedBorderColor = WarmAmber
                             ),
-                            modifier = Modifier.height(28.dp)
+                            modifier = Modifier.height(26.dp)
                         )
 
                         FilterChip(
@@ -714,18 +688,18 @@ fun CreativeDrawer(
                             onClick = onShowGpuOverlayToggled,
                             label = { Text(if (showGpuOverlay) "GPU HUD ON" else "GPU HUD OFF", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = AmberGold,
-                                selectedLabelColor = DarkBackground,
-                                containerColor = ElevatedSurface,
-                                labelColor = White
+                                selectedContainerColor = WarmAmber,
+                                selectedLabelColor = SurfaceDark,
+                                containerColor = SurfaceElevated,
+                                labelColor = PureWhite
                             ),
                             border = FilterChipDefaults.filterChipBorder(
                                 enabled = true,
                                 selected = showGpuOverlay,
-                                borderColor = SlateBorder,
-                                selectedBorderColor = AmberGold
+                                borderColor = BorderHairline,
+                                selectedBorderColor = WarmAmber
                             ),
-                            modifier = Modifier.height(28.dp)
+                            modifier = Modifier.height(26.dp)
                         )
 
                         FilterChip(
@@ -733,18 +707,18 @@ fun CreativeDrawer(
                             onClick = onLegacyJpegToggled,
                             label = { Text(if (isLegacyJpeg) "JPEG Stream" else "Direct YUV420", fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = AmberGold,
-                                selectedLabelColor = DarkBackground,
-                                containerColor = ElevatedSurface,
-                                labelColor = White
+                                selectedContainerColor = WarmAmber,
+                                selectedLabelColor = SurfaceDark,
+                                containerColor = SurfaceElevated,
+                                labelColor = PureWhite
                             ),
                             border = FilterChipDefaults.filterChipBorder(
                                 enabled = true,
                                 selected = isLegacyJpeg,
-                                borderColor = SlateBorder,
-                                selectedBorderColor = AmberGold
+                                borderColor = BorderHairline,
+                                selectedBorderColor = WarmAmber
                             ),
-                            modifier = Modifier.height(28.dp)
+                            modifier = Modifier.height(26.dp)
                         )
                     }
                 }

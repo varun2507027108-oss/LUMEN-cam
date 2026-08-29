@@ -76,14 +76,14 @@ enum class WheelParameter(
     val unit: String,
     val defaultValue: Float,
     val icon: ImageVector,
-    val accentColor: Color
+    val accentColor: Color = com.auroracam.app.ui.theme.WarmAmber
 ) {
-    ECHO_DECAY("Echo Decay", "%", 0.75f, Icons.Default.History, com.auroracam.app.ui.theme.LookNostalgia),
-    MOTION_THRESHOLD("Motion Thresh", "", 0.08f, Icons.AutoMirrored.Filled.DirectionsRun, com.auroracam.app.ui.theme.FocusMint),
-    LIGHT_DECAY("Light Decay", "%", 0.94f, Icons.Default.Flare, com.auroracam.app.ui.theme.SolarGold),
-    CHROMATIC_ABERRATION("Aberration", "%", 0.35f, Icons.Default.BlurOn, com.auroracam.app.ui.theme.OpticCyan),
-    LOOK_INTENSITY("Look Mix", "%", 1.0f, Icons.Default.ColorLens, com.auroracam.app.ui.theme.LookWarmth),
-    HALATION_GLOW("Glow", "%", 0.20f, Icons.Default.WbSunny, com.auroracam.app.ui.theme.SolarOrange)
+    ECHO_DECAY("Echo Decay", "%", 0.75f, Icons.Default.History),
+    MOTION_THRESHOLD("Motion Thresh", "", 0.08f, Icons.AutoMirrored.Filled.DirectionsRun),
+    LIGHT_DECAY("Light Decay", "%", 0.94f, Icons.Default.Flare),
+    CHROMATIC_ABERRATION("Aberration", "%", 0.35f, Icons.Default.BlurOn),
+    LOOK_INTENSITY("Look Mix", "%", 1.0f, Icons.Default.ColorLens),
+    HALATION_GLOW("Glow", "%", 0.20f, Icons.Default.WbSunny)
 }
 
 /**

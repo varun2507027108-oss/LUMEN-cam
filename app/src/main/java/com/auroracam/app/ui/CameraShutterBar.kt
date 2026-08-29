@@ -15,13 +15,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -32,26 +32,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
-import com.auroracam.app.ui.theme.AmberGold
-import com.auroracam.app.ui.theme.AmberGoldDim
-import com.auroracam.app.ui.theme.DarkBackground
-import com.auroracam.app.ui.theme.DarkSurface
-import com.auroracam.app.ui.theme.ElevatedSurface
-import com.auroracam.app.ui.theme.SlateBorder
-import com.auroracam.app.ui.theme.TextSecondary
-import com.auroracam.app.ui.theme.White
+import com.auroracam.app.ui.theme.BorderHairline
+import com.auroracam.app.ui.theme.NeutralSlate
+import com.auroracam.app.ui.theme.PureWhite
+import com.auroracam.app.ui.theme.SurfaceDark
+import com.auroracam.app.ui.theme.SurfaceElevated
+import com.auroracam.app.ui.theme.WarmAmber
+import com.auroracam.app.ui.theme.WarmAmberDim
 
 /**
- * Minimalist Cinema Shutter Bar.
+ * Mechanical-Style Tactile Shutter Dock.
  *
- * 1. Left: Direct Phone Gallery Launcher Thumbnail.
- * 2. Center: Tactile Shutter Button with animated press feedback.
- * 3. Right: Sleek Creative Drawer Toggle Button.
+ * 1. Left: Gallery Thumbnail (48.dp Squircle with 2.dp amber/slate border).
+ * 2. Center: Mechanical Shutter Button (80.dp outer metallic ring + 66.dp inner solid white disc with 0.92f press scale).
+ * 3. Right: Creative Controls Toggle Button (48.dp squircle chip with fine slider/tuning icon).
  */
 @Composable
 fun CameraShutterBar(
@@ -71,28 +69,29 @@ fun CameraShutterBar(
     val isPressed by interactionSource.collectIsPressedAsState()
 
     val shutterScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.90f else 1.0f,
-        animationSpec = tween(durationMillis = 100),
-        label = "ShutterScale"
+        targetValue = if (isPressed) 0.92f else 1.0f,
+        animationSpec = tween(durationMillis = 80),
+        label = "MechanicalShutterScale"
     )
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 28.dp, vertical = 4.dp),
+            .navigationBarsPadding()
+            .padding(horizontal = 28.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 1. Direct Gallery Launch Thumbnail Preview
+        // 1. Gallery Thumbnail (48.dp Squircle)
         Box(
             modifier = Modifier
-                .size(50.dp)
-                .clip(RoundedCornerShape(15.dp))
-                .background(ElevatedSurface)
+                .size(48.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(SurfaceElevated)
                 .border(
-                    1.5.dp,
-                    if (lastCapturedThumbnail != null) AmberGold else SlateBorder,
-                    RoundedCornerShape(15.dp)
+                    2.dp,
+                    if (lastCapturedThumbnail != null) WarmAmber else BorderHairline,
+                    RoundedCornerShape(14.dp)
                 )
                 .clickable {
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -103,7 +102,7 @@ fun CameraShutterBar(
             if (lastCapturedThumbnail != null) {
                 Image(
                     bitmap = lastCapturedThumbnail.asImageBitmap(),
-                    contentDescription = "Open in Gallery",
+                    contentDescription = "Open Gallery",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -111,51 +110,57 @@ fun CameraShutterBar(
                 Icon(
                     imageVector = Icons.Default.CameraAlt,
                     contentDescription = "Open Gallery",
-                    tint = TextSecondary,
+                    tint = NeutralSlate,
                     modifier = Modifier.size(20.dp)
                 )
             }
         }
 
-        // 2. Tactile Shutter Button
+        // 2. Mechanical Tactile Shutter Button (80.dp Outer Ring + 66.dp Inner Disc)
         Box(
             modifier = Modifier
-                .size(76.dp)
-                .scale(shutterScale)
+                .size(80.dp)
                 .clip(CircleShape)
-                .border(3.dp, White, CircleShape)
-                .padding(4.dp)
-                .clip(CircleShape)
-                .background(if (isCapturing) AmberGold else White)
-                .clickable(
-                    interactionSource = interactionSource,
-                    indication = null,
-                    enabled = !isCapturing
-                ) {
-                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    onShutterClicked()
-                },
+                .border(3.dp, PureWhite, CircleShape)
+                .padding(5.dp),
             contentAlignment = Alignment.Center
         ) {
-            if (isCapturing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(28.dp),
-                    color = DarkBackground,
-                    strokeWidth = 3.dp
-                )
+            Box(
+                modifier = Modifier
+                    .size(66.dp)
+                    .scale(shutterScale)
+                    .clip(CircleShape)
+                    .background(if (isCapturing) WarmAmber else PureWhite)
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        enabled = !isCapturing
+                    ) {
+                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        onShutterClicked()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                if (isCapturing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = SurfaceDark,
+                        strokeWidth = 2.5.dp
+                    )
+                }
             }
         }
 
-        // 3. Creative Modes & Drawer Toggle Button
+        // 3. Creative Controls Toggle Button (48.dp Squircle)
         Box(
             modifier = Modifier
-                .size(50.dp)
-                .clip(CircleShape)
-                .background(if (isDrawerOpen) AmberGold else ElevatedSurface)
+                .size(48.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(if (isDrawerOpen) WarmAmberDim else SurfaceElevated)
                 .border(
-                    1.5.dp,
-                    if (isDrawerOpen) AmberGold else SlateBorder,
-                    CircleShape
+                    1.dp,
+                    if (isDrawerOpen) WarmAmber else BorderHairline,
+                    RoundedCornerShape(14.dp)
                 )
                 .clickable {
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -164,9 +169,9 @@ fun CameraShutterBar(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = if (isDrawerOpen) Icons.Default.Close else Icons.Default.Tune,
-                contentDescription = "Creative Controls & Modes",
-                tint = if (isDrawerOpen) DarkBackground else White,
+                imageVector = Icons.Default.Tune,
+                contentDescription = "Creative Controls",
+                tint = if (isDrawerOpen) WarmAmber else NeutralSlate,
                 modifier = Modifier.size(20.dp)
             )
         }

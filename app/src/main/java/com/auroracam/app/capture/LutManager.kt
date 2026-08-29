@@ -8,6 +8,10 @@ import android.util.Log
 import com.auroracam.app.gl.lut.AuroraWarmLut
 import com.auroracam.app.gl.lut.ChromeLut
 import com.auroracam.app.gl.lut.CubeParser
+import com.auroracam.app.gl.lut.FujiClassicChromeLut
+import com.auroracam.app.gl.lut.HasselbladNaturalLut
+import com.auroracam.app.gl.lut.KodakPortra400Lut
+import com.auroracam.app.gl.lut.LeicaCharacterLut
 import com.auroracam.app.gl.lut.MonoLut
 import com.auroracam.app.gl.lut.ParsedCube
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +27,15 @@ class LutManager(private val context: Context) {
         private const val KEY_LAST_LUT_NAME = "last_selected_lut_name"
         private const val KEY_LAST_LUT_FILE = "last_selected_lut_file"
         
-        val BUILTIN_PRESETS = listOf(AuroraWarmLut.LUT_NAME, ChromeLut.LUT_NAME, MonoLut.LUT_NAME)
+        val BUILTIN_PRESETS = listOf(
+            AuroraWarmLut.LUT_NAME,
+            HasselbladNaturalLut.LUT_NAME,
+            LeicaCharacterLut.LUT_NAME,
+            FujiClassicChromeLut.LUT_NAME,
+            KodakPortra400Lut.LUT_NAME,
+            ChromeLut.LUT_NAME,
+            MonoLut.LUT_NAME
+        )
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -54,6 +66,10 @@ class LutManager(private val context: Context) {
         }
 
         return@withContext when (lastName) {
+            HasselbladNaturalLut.LUT_NAME -> selectPreset(HasselbladNaturalLut.LUT_NAME)
+            LeicaCharacterLut.LUT_NAME -> selectPreset(LeicaCharacterLut.LUT_NAME)
+            FujiClassicChromeLut.LUT_NAME -> selectPreset(FujiClassicChromeLut.LUT_NAME)
+            KodakPortra400Lut.LUT_NAME -> selectPreset(KodakPortra400Lut.LUT_NAME)
             ChromeLut.LUT_NAME -> selectPreset(ChromeLut.LUT_NAME)
             MonoLut.LUT_NAME -> selectPreset(MonoLut.LUT_NAME)
             else -> selectPreset(AuroraWarmLut.LUT_NAME)
@@ -61,7 +77,7 @@ class LutManager(private val context: Context) {
     }
 
     /**
-     * Selects one of the built-in procedural preset LUTs (Warm, Chrome, Mono).
+     * Selects one of the built-in procedural preset LUTs (Warm, Hasselblad, Leica, Classic Chrome, Portra 400, Chrome, Mono).
      */
     fun selectPreset(presetName: String): Pair<String, ParsedCube> {
         activeLutName = presetName
@@ -71,6 +87,10 @@ class LutManager(private val context: Context) {
             .apply()
 
         val cube = when (presetName) {
+            HasselbladNaturalLut.LUT_NAME -> HasselbladNaturalLut.generate()
+            LeicaCharacterLut.LUT_NAME -> LeicaCharacterLut.generate()
+            FujiClassicChromeLut.LUT_NAME -> FujiClassicChromeLut.generate()
+            KodakPortra400Lut.LUT_NAME -> KodakPortra400Lut.generate()
             ChromeLut.LUT_NAME -> ChromeLut.generate()
             MonoLut.LUT_NAME -> MonoLut.generate()
             else -> AuroraWarmLut.generate()

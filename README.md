@@ -1,52 +1,53 @@
 # AuroraCam
 
-> Live double exposure, real-time 3D LUT color grading, temporal echo, motion-only exposure, and light trail accumulation — rendered entirely on the GPU in the viewfinder before pressing the shutter.
+> Live double exposure, real-time procedural 3D LUT color grading, temporal echo, motion-only exposure, and light trail accumulation — rendered entirely on the GPU in the viewfinder before pressing the shutter.
 
-AuroraCam is a cinema-grade creative camera application for Android built with **Jetpack Compose**, **direct Camera2 HAL integration**, and **OpenGL ES 3.0**.
+AuroraCam is a cinema-grade, tactile creative camera application for Android built with **Jetpack Compose**, **direct Camera2 HAL integration**, and **OpenGL ES 3.0**.
 
 ---
 
 ## 🌟 Key Features
 
-### 🎨 Live 3D LUT Color Grading & Tone Engine
-- **Hardware-Accelerated 3D Textures:** Parses `.cube` files (standard 17³, 33³, 64³ grid sizes) directly on the GPU using `GL_TEXTURE_3D` with trilinear filtering.
-- **Built-in Presets:** Warm Gold, Cyberpunk, Cinema, Monochrome, and Emerald with instantaneous live preview.
+### 🎛️ Leica / Halide / Blackmagic Tactile Industrial UI
+- **Obsidian & Warm Amber Design System:** Pure industrial camera aesthetics built on deep matte surfaces (`SurfaceDark` `0xFF0F1115`), hairline borders (`0xFF2B313D`), smoked glass scrims, monospaced technical readouts, and a dedicated **Leica Warm Amber** (`0xFFE5A00D`) accent.
+- **Inset-Aware Diagnostic Top Bar:** Positioned safely below native system status bars, showing telemetry pills (`[ 24 FPS ]`, `[ HDR ]`, `[ 4:3 ]`, `[ AUTO / PRO ]`).
+- **Direct-Access Looks Snapping Dial:** Horizontal text dial situated right above the shutter button for instant switching between analog film looks without opening menus.
+- **Mechanical Shutter Dock:** 80.dp tactile shutter with inner solid disc scale animations, 48.dp squircle gallery preview thumbnail, and one-tap creative drawer access.
+- **Compact Creative Controls Bottom Sheet:** Low-profile half-sheet ($\le 35\%$ screen height) keeping the live viewfinder fully visible for framing while tuning parameters across `MODES`, `LOOKS`, `EFFECTS`, and `PRO` tabs.
+
+---
+
+### 🎨 Procedural & Hardware-Accelerated 3D LUT Tone Engine
+- **Hardware-Accelerated 3D Textures:** Parses `.cube` files (17³, 33³, 64³ grid sizes) directly on the GPU using `GL_TEXTURE_3D` with trilinear filtering.
+- **Procedural Film Look Generators:**
+  - **Hasselblad (HNCS):** Hasselblad Natural Color Solution featuring medium-format tonal fidelity, natural skin tones, smooth rational asymptotic highlight shoulder ($x > 0.55$), and neutral shadow floor.
+  - **Leica Character:** High micro-contrast Hermite S-curve, signature warm-amber midtone glow ($L = 0.45$), rich shadow depth, and vibrant color rendition.
+  - **Fujifilm Classic Chrome:** Documentary contrast with deep shadow toe ($x^{1.22}$), muted sky teal/cyan shifts, earthy warm reds, and restrained saturation.
+  - **Kodak Portra 400:** Iconic portrait negative film look with lifted matte blacks ($+0.035$), golden-peach skin tones, and ivory highlight roll-off.
+  - **Aurora Warm:** Golden sunset warmth and gentle atmospheric glow.
+  - **Monochrome & Chrome:** High-contrast street photography black & white and vintage chrome grades.
 - **Custom LUT Import:** Import custom `.cube` grading LUTs from device storage via Android Storage Access Framework (SAF).
 - **16-Bit Float HDR Pipeline:** High dynamic range intermediate framebuffers (`GL_RGBA16F`) preventing color banding in dark gradients and bright highlights.
-- **Local Tone Mapping & Sharpening:** Dynamic range compression and unsharp masking for crisp details.
 - **Look Intensity & Halation Glow:** Real-time bloom/glow blur shader simulating vintage analog film halation around high-contrast edges.
 
-### 🌀 Advanced Creative Modes
+---
+
+### 🌀 Advanced GPU Creative Modes
 - **📸 Standard & QuickStack Computational Burst:** High-speed 6-frame burst capture with phase-correlation spatial alignment and GPU temporal stacking for noise reduction in low-light scenes.
 - **👥 Live GPU Double Exposure:** Two-stage multi-exposure pipeline with live viewfinder blending (Screen, Overlay, Add, Lighten, Multiply), opacity scrubber, and horizontal flip controls.
-- **👻 Temporal Echo (Ghost Trails):** 3-frame GPU history ring buffer blending (`glBlitFramebuffer`) with exponential decay and blend modes to produce vintage multi-image motion trails.
+- **👻 Temporal Echo (Ghost Trails):** 3-frame GPU history ring buffer blending (`glBlitFramebuffer`) with exponential decay to produce vintage multi-image motion trails.
 - **🏃 Motion-Only Exposure:** Real-time luminance frame-differencing shader pass isolating moving subjects from static backgrounds with adjustable motion thresholds.
 - **✨ Light Trails Mode:** Ping-Pong accumulation FBO max/decay blend engine simulating long exposure light painting in real-time with instant reset controls.
 
-### 🌈 Radial Chromatic Aberration Post-Processing
-- Realistic lens wavelength RGB dispersion shader applying radial offsets based on distance from the optical center with full aspect ratio correction.
-
-### 🎛️ Rotary Parameter Wheel & Bottom Control Shelf
-- **Unobstructed Viewfinder:** All camera controls and menus are placed cleanly **below the shutter button**, maximizing viewfinder clarity.
-- **Tactile Parameter Wheel:** Circular rotary dial UI with angular gesture tracking for precision real-time tuning of:
-  - `Echo Decay` (%)
-  - `Motion Threshold`
-  - `Light Decay` (%)
-  - `Aberration` (%)
-  - `Look Mix` (%)
-  - `Halation Glow` (%)
-- **Organized Control Tabs:**
-  - **LOOKS:** Quick preset selector, `.cube` file importer, and reset.
-  - **EFFECTS:** Interactive rotary parameter wheel for active effects.
-  - **FINE_TUNE:** Fine-tune Look intensity (0–100%), halation glow (0–60%), and chromatic aberration (0–100%).
-  - **PRO:** QuickStack burst toggle, 16-bit Float FBO toggle, and aspect ratio selector.
-  - **CAPTURE:** Real-time double exposure controls and instant Light Trail buffer reset.
+---
 
 ### 🎯 Precision Cinema Focus Reticle & Integrated Exposure Slider
 - **Tap-to-Focus 3A Metering:** Tap anywhere on the viewfinder to dynamically update Camera2 `CONTROL_AF_REGIONS` and `CONTROL_AE_REGIONS` with auto-focus trigger cycles.
-- **Cinema-Grade Reticle:** Minimalist golden corner brackets with center targeting reticle dot.
-- **Integrated EV Exposure Slider:** Vertical draggable Sun slider positioned seamlessly next to the focus reticle. Adjust exposure bias (-2.0 EV to +2.0 EV) in real-time with live monospace readout (`+0.7`, `-1.3`).
-- **Edge-Aware Positioning:** Automatically adapts to screen edges so sliders and reticles never clip off-screen.
+- **Cinema-Grade Reticle:** Minimalist corner chamfered L-brackets with center targeting crosshair and target dot.
+- **AE/AF Lock Capsule:** One-tap lock pill with long-press haptic feedback to pin exposure and focus distance.
+- **Solar Vernier Exposure Ladder:** Precision vertical draggable solar ladder with 1/3-stop increments (-2.0 EV to +2.0 EV) and high-contrast digital readout.
+
+---
 
 ### 📐 Framing & Aspect Ratio Formats
 - **XPAN Panoramic (65:24):** True cinematic ultra-wide crop with orange viewfinder corner guides.
@@ -88,7 +89,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## 📦 Automated Releases via GitHub Actions
 
-Pushing a tag formatted as `v*` (e.g. `v0.3.0`) automatically triggers GitHub Actions CI/CD to build the release APK and attach it to GitHub Releases.
+Pushing a tag formatted as `v*` (e.g. `v0.4.0`) automatically triggers GitHub Actions CI/CD to build the release APK and attach it to GitHub Releases.
 
 ---
 
