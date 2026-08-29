@@ -156,7 +156,7 @@ class FocusPeakingPass {
         GLES30.glUniform3f(uPeakColorLoc, peakColorR, peakColorG, peakColorB)
 
         GLES30.glBindVertexArray(vaoId)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 6)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         GLES30.glBindVertexArray(0)
 
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
