@@ -76,7 +76,7 @@ import kotlinx.coroutines.withContext
 /**
  * Fullscreen In-App Photo Viewer Dialog.
  *
- * Allows users to inspect high-resolution captures directly inside AuroraCam,
+ * Allows users to inspect high-resolution captures directly inside Lumen,
  * with pinch-to-zoom, share intent, open-in-gallery intent, and delete options.
  */
 @Composable
@@ -234,7 +234,7 @@ fun PhotoViewerDialog(
                             putExtra(Intent.EXTRA_STREAM, photoUri)
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Share AuroraCam Photo"))
+                        context.startActivity(Intent.createChooser(shareIntent, "Share Lumen Photo"))
                     }
                 )
 

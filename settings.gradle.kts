@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AuroraCam"
+rootProject.name = "Lumen"
 include(":app")

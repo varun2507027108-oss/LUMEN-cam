@@ -1,8 +1,8 @@
-# AuroraCam
+# Lumen
 
 > Live double exposure, real-time procedural 3D LUT color grading, temporal echo, motion-only exposure, and light trail accumulation — rendered entirely on the GPU in the viewfinder before pressing the shutter.
 
-AuroraCam is a cinema-grade, tactile creative camera application for Android built with **Jetpack Compose**, **direct Camera2 HAL integration**, and **OpenGL ES 3.0**.
+Lumen is a cinema-grade, tactile creative camera application for Android built with **Jetpack Compose**, **direct Camera2 HAL integration**, and **OpenGL ES 3.0**.
 
 ---
 
@@ -27,7 +27,7 @@ AuroraCam is a cinema-grade, tactile creative camera application for Android bui
   - **Leica Character:** High micro-contrast Hermite S-curve, signature warm-amber midtone glow ($L = 0.45$), rich shadow depth, and vibrant color rendition.
   - **Fujifilm Classic Chrome:** Documentary contrast with deep shadow toe ($x^{1.22}$), muted sky teal/cyan shifts, earthy warm reds, and restrained saturation.
   - **Kodak Portra 400:** Iconic portrait negative film look with lifted matte blacks ($+0.035$), golden-peach skin tones, and ivory highlight roll-off.
-  - **Aurora Warm:** Golden sunset warmth and gentle atmospheric glow.
+  - **Lumen Warm:** Golden sunset warmth and gentle atmospheric glow.
   - **Monochrome & Chrome:** High-contrast street photography black & white and vintage chrome grades.
 - **Custom LUT Import (`.CUBE`):** Seamlessly import external `.cube` grading LUTs from device storage via Android Storage Access Framework (SAF).
 - **16-Bit Float HDR Pipeline:** High dynamic range intermediate framebuffers (`GL_RGBA16F`) preventing color banding in dark gradients and bright highlights.
@@ -120,7 +120,7 @@ graph LR
     subgraph Camera_Engine [Camera & Renderer Controllers]
         CamCtrl[CameraController]
         Cam2HAL[Camera2 HAL Engine]
-        GLRender[AuroraRenderer / LutManager]
+        GLRender[LumenRenderer / LutManager]
     end
 
     HUD -->|Tap Flash| FlashToggle --> CamCtrl
@@ -139,11 +139,11 @@ graph LR
 
 ## 🏛️ Architectural Principles
 
-1. **Zero CPU pixel work in the preview loop:** Frames stream directly from Camera2 `Surface(SurfaceTexture)` &rarr; `GL_TEXTURE_EXTERNAL_OES` &rarr; GPU multi-pass shaders &rarr; Screen FBO.
+1. **Zero CPU pixel work in the preview loop:** Frames stream directly from Camera2 `Surface(SurfaceTexture)` → `GL_TEXTURE_EXTERNAL_OES` → GPU multi-pass shaders → Screen FBO.
 2. **Direct Camera2 Architecture:** Direct HAL stream management with zero buffer starvation, atomic telemetry collection (ISO, Shutter speed), and single-shot high-res captures.
 3. **Spec-Compliant FBO Discipline:** Intermediate floating-point processing (`RGBA16F`) for HDR tone grading, with strict normalized fixed-point (`RGBA8`) targets for `glReadPixels` to prevent vendor GPU driver faults.
 4. **Zero-ALU Frame History:** Leverages `glBlitFramebuffer` on Qualcomm Adreno hardware to maintain frame history buffers with minimal overhead.
-5. **Scoped Storage Integration:** Photos saved seamlessly to `Pictures/AuroraCam` via MediaStore API with complete EXIF and telemetry metadata.
+5. **Scoped Storage Integration:** Photos saved seamlessly to `Pictures/Lumen` via MediaStore API with complete EXIF and telemetry metadata.
 
 ---
 
@@ -177,4 +177,3 @@ Pushing a tag formatted as `v*` (e.g. `v0.4.0`) automatically triggers GitHub Ac
 ## 📄 License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-

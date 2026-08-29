@@ -10,7 +10,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.auroracam.app.ui.CameraScreen
 import com.auroracam.app.ui.PermissionGate
-import com.auroracam.app.ui.theme.AuroraCamTheme
+import com.auroracam.app.ui.theme.LumenTheme
 import com.auroracam.app.ui.theme.DarkBackground
 
 class MainActivity : ComponentActivity() {
@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setContent {
-            AuroraCamTheme {
+            LumenTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = DarkBackground

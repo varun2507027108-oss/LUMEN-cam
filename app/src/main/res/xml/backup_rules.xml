@@ -2,5 +2,5 @@
 <full-backup-content>
     <exclude domain="file" path="Look/" />
     <exclude domain="file" path="dx_metadata/" />
-    <exclude domain="sharedpref" path="aurora_lut_prefs.xml" />
+    <exclude domain="sharedpref" path="lumen_lut_prefs.xml" />
 </full-backup-content>

@@ -39,7 +39,7 @@ data class LookActivationResult(
 class LutManager(private val context: Context) {
     companion object {
         private const val TAG = "LutManager"
-        private const val PREFS_NAME = "aurora_lut_prefs"
+        private const val PREFS_NAME = "lumen_lut_prefs"
         private const val KEY_LAST_LUT_NAME = "last_selected_lut_name"
         private const val KEY_LAST_LUT_FILE = "last_selected_lut_file"
 

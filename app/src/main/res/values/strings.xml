@@ -1,7 +1,7 @@
 <resources>
-    <string name="app_name">AuroraCam</string>
+    <string name="app_name">Lumen</string>
     <string name="camera_permission_required">Camera Permission Required</string>
-    <string name="camera_permission_rationale">AuroraCam needs camera access to render real-time creative camera effects directly on your GPU.</string>
+    <string name="camera_permission_rationale">Lumen needs camera access to render real-time creative camera effects directly on your GPU.</string>
     <string name="grant_permission">Grant Permission</string>
     <string name="manual_exposure_debug">Manual Exposure (1/2s + ISO 50)</string>
     <string name="auto_exposure">Auto Exposure (AE On)</string>

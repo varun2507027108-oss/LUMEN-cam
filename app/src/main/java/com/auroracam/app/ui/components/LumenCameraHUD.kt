@@ -87,7 +87,7 @@ val ShutterSpeedOptions = listOf(
 )
 
 /**
- * AuroraCameraHUD — Minimal Transparent Photographic Status Line & Viewfinder Controls.
+ * LumenCameraHUD — Minimal Transparent Photographic Status Line & Viewfinder Controls.
  *
  * Features:
  * - FPS | Interactive Shutter Speed Selector | Interactive EV Slider
@@ -95,7 +95,7 @@ val ShutterSpeedOptions = listOf(
  * - Studio Mode & Film Look trigger badge
  */
 @Composable
-fun AuroraCameraHUD(
+fun LumenCameraHUD(
     currentFps: Double,
     evBias: Float,
     onEvBiasChanged: (Float) -> Unit,

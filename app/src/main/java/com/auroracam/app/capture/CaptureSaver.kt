@@ -24,7 +24,7 @@ import java.util.Locale
 
 object CaptureSaver {
     private const val TAG = "CaptureSaver"
-    private const val ALBUM_NAME = "AuroraCam"
+    private const val ALBUM_NAME = "Lumen"
 
     data class Telemetry(
         val iso: Int? = null,

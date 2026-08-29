@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.AuroraCam" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Lumen" parent="android:Theme.Material.NoActionBar">
         <item name="android:statusBarColor">#00000000</item>
         <item name="android:navigationBarColor">#00000000</item>
         <item name="android:windowBackground">@color/dark_bg</item>

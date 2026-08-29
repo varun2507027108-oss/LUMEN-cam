@@ -16,7 +16,7 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun AuroraCamTheme(content: @Composable () -> Unit) {
+fun LumenTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = DarkColorScheme,
         typography = Typography,

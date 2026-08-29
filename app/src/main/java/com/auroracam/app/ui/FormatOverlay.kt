@@ -18,7 +18,7 @@ import com.auroracam.app.ui.theme.ParchmentWhite
  * Viewfinder Optical Format Guides Overlay.
  *
  * Renders precision optical framing guides and translucent masks for XPAN (65:24) and 1:1.
- * Frame corner registration brackets match AuroraCam's geometric motif.
+ * Frame corner registration brackets match Lumen's geometric motif.
  */
 @Composable
 fun FormatOverlay(

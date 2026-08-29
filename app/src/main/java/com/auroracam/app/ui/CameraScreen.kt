@@ -70,7 +70,7 @@ import com.auroracam.app.gl.AuroraRenderer
 import com.auroracam.app.gl.GpuTelemetry
 import com.auroracam.app.gl.lut.DebugLutGenerator
 import com.auroracam.app.ui.components.AuroraAdjustPanel
-import com.auroracam.app.ui.components.AuroraCameraHUD
+import com.auroracam.app.ui.components.LumenCameraHUD
 import com.auroracam.app.ui.components.AuroraLabScreen
 import com.auroracam.app.ui.components.AuroraShutter
 import com.auroracam.app.ui.components.AuroraTopMenu
@@ -375,8 +375,8 @@ fun CameraScreen() {
             }
         }
 
-        // 4. Floating Minimal Photographic Status Line & Studio Menu Trigger (AuroraCameraHUD)
-        AuroraCameraHUD(
+        // 4. Floating Minimal Photographic Status Line & Studio Menu Trigger (LumenCameraHUD)
+        LumenCameraHUD(
             currentFps = currentFps,
             evBias = evBias,
             onEvBiasChanged = { ev ->
