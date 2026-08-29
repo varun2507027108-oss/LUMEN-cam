@@ -27,6 +27,7 @@ import android.util.Range
 import android.util.Size
 import android.view.Surface
 import com.auroracam.app.camera.burst.RawYuvFrame
+import com.auroracam.app.camera.burst.YuvBufferPool
 import com.auroracam.app.capture.CaptureSaver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -167,6 +168,8 @@ class Camera2CaptureEngine(
                 Log.e(TAG, "Error closing camera: ${e.message}")
             }
         }
+        // Clear pooled YUV buffers so they don't linger across camera sessions
+        YuvBufferPool.clear()
     }
 
     fun open(
@@ -301,10 +304,6 @@ class Camera2CaptureEngine(
         val jpegReader = captureJpegReader
         val rawReader = captureRawReader
 
-        val surfaces = mutableListOf<Surface>(preview, yuvReader.surface)
-        jpegReader?.let { surfaces.add(it.surface) }
-        rawReader?.let { surfaces.add(it.surface) }
-
         CameraProbe.checkSessionConfigurationSupport(
             device = device,
             previewSurface = preview,
@@ -312,30 +311,75 @@ class Camera2CaptureEngine(
             jpegSurface = jpegReader?.surface
         )
 
-        try {
-            @Suppress("DEPRECATION")
-            device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(session: CameraCaptureSession) {
-                    Log.i(TAG, "=== CAMERA2 CAPTURE SESSION CONFIGURED SUCCESSFULLY (gen=$generation) ===")
-                    synchronized(cameraLock) {
-                        if (openGeneration.get() != generation || cameraDevice == null) {
-                            Log.w(TAG, "CaptureSession onConfigured discarded: superseded by newer generation")
-                            try { session.close() } catch (e: Exception) {}
-                            return
-                        }
-                        captureSession = session
-                        isProbeCompleted = true
-
-                        startRepeatingPreview()
-                        onSessionReady?.invoke()
+        val sessionCallback = object : CameraCaptureSession.StateCallback() {
+            override fun onConfigured(session: CameraCaptureSession) {
+                Log.i(TAG, "=== CAMERA2 CAPTURE SESSION CONFIGURED SUCCESSFULLY (gen=$generation) ===")
+                synchronized(cameraLock) {
+                    if (openGeneration.get() != generation || cameraDevice == null) {
+                        Log.w(TAG, "CaptureSession onConfigured discarded: superseded by newer generation")
+                        try { session.close() } catch (e: Exception) {}
+                        return
                     }
+                    captureSession = session
+                    isProbeCompleted = true
+
+                    startRepeatingPreview()
+                    onSessionReady?.invoke()
+                }
+            }
+
+            override fun onConfigureFailed(session: CameraCaptureSession) {
+                Log.e(TAG, "CameraCaptureSession onConfigureFailed (gen=$generation)")
+                try { session.close() } catch (e: Exception) {}
+            }
+        }
+
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                // API 33+: tag each stream with its Stream Use Case so the camera HAL
+                // can apply per-stream optimization (responsive preview vs. high-quality
+                // still capture) instead of treating every surface identically.
+                val outputConfigs = mutableListOf<android.hardware.camera2.params.OutputConfiguration>()
+
+                val previewConfig = android.hardware.camera2.params.OutputConfiguration(preview).apply {
+                    streamUseCase = CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_PREVIEW.toLong()
+                }
+                outputConfigs.add(previewConfig)
+
+                val yuvConfig = android.hardware.camera2.params.OutputConfiguration(yuvReader.surface).apply {
+                    streamUseCase = CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
+                }
+                outputConfigs.add(yuvConfig)
+
+                jpegReader?.let {
+                    val jpegConfig = android.hardware.camera2.params.OutputConfiguration(it.surface).apply {
+                        streamUseCase = CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
+                    }
+                    outputConfigs.add(jpegConfig)
                 }
 
-                override fun onConfigureFailed(session: CameraCaptureSession) {
-                    Log.e(TAG, "CameraCaptureSession onConfigureFailed (gen=$generation)")
-                    try { session.close() } catch (e: Exception) {}
+                rawReader?.let {
+                    // RAW doesn't have its own dedicated use-case constant; leave it
+                    // untagged (DEFAULT) rather than guessing.
+                    outputConfigs.add(android.hardware.camera2.params.OutputConfiguration(it.surface))
                 }
-            }, cameraHandler)
+
+                val sessionConfig = android.hardware.camera2.params.SessionConfiguration(
+                    android.hardware.camera2.params.SessionConfiguration.SESSION_REGULAR,
+                    outputConfigs,
+                    java.util.concurrent.Executors.newSingleThreadExecutor(),
+                    sessionCallback
+                )
+                device.createCaptureSession(sessionConfig)
+            } else {
+                // Pre-API-33 fallback: legacy path, no stream use case tagging available.
+                val surfaces = mutableListOf<Surface>(preview, yuvReader.surface)
+                jpegReader?.let { surfaces.add(it.surface) }
+                rawReader?.let { surfaces.add(it.surface) }
+
+                @Suppress("DEPRECATION")
+                device.createCaptureSession(surfaces, sessionCallback, cameraHandler)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create Camera2 capture session: ${e.message}", e)
         }
@@ -948,5 +992,7 @@ class Camera2CaptureEngine(
             Log.e(TAG, "Error during engine release: ${e.message}")
         }
         stopBackgroundThread()
+        // Clear pooled YUV buffers on full engine release
+        YuvBufferPool.clear()
     }
 }

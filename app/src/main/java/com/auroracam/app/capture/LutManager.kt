@@ -19,6 +19,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.util.Locale
 
 data class LookUniforms(
     val intensity: Float = 1.0f,
@@ -41,7 +42,7 @@ class LutManager(private val context: Context) {
         private const val PREFS_NAME = "aurora_lut_prefs"
         private const val KEY_LAST_LUT_NAME = "last_selected_lut_name"
         private const val KEY_LAST_LUT_FILE = "last_selected_lut_file"
-        
+
         val BUILTIN_PRESETS = listOf(
             AuroraWarmLut.LUT_NAME,
             HasselbladNaturalLut.LUT_NAME,
@@ -175,17 +176,37 @@ class LutManager(private val context: Context) {
      * Imports a .cube file via SAF Uri, caches it into filesDir/Look/, and parses it off-thread.
      */
     suspend fun importAndSelectCubeUri(uri: Uri): LookActivationResult = withContext(Dispatchers.IO) {
-        val displayName = getFileNameFromUri(uri) ?: "custom_${System.currentTimeMillis()}.cube"
-        val targetFile = File(lookDir, displayName)
+        val rawDisplayName = getFileNameFromUri(uri) ?: "custom_${System.currentTimeMillis()}.cube"
+        val safeDisplayName = sanitizeLutFileName(rawDisplayName)
+        val targetFile = File(lookDir, safeDisplayName)
+
+        // Defense in depth: confirm the resolved canonical path still lives inside
+        // lookDir even after sanitization, in case of unexpected edge cases.
+        require(targetFile.canonicalFile.parentFile == lookDir.canonicalFile) {
+            "Resolved LUT path escaped the expected directory"
+        }
 
         context.contentResolver.openInputStream(uri)?.use { input: InputStream ->
             FileOutputStream(targetFile).use { output ->
-                input.copyTo(output)
+                val buffer = ByteArray(8192)
+                var totalBytes = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    totalBytes += read
+                    if (totalBytes > MAX_CUBE_FILE_BYTES) {
+                        targetFile.delete()
+                        throw IllegalArgumentException(
+                            "LUT file exceeds maximum allowed size of ${MAX_CUBE_FILE_BYTES / (1024 * 1024)} MB"
+                        )
+                    }
+                    output.write(buffer, 0, read)
+                }
             }
-        }
+        } ?: throw IllegalArgumentException("Could not open input stream for LUT URI")
 
         val parsed = targetFile.inputStream().use { CubeParser.parse(it) }
-        val lutName = displayName.removeSuffix(".cube")
+        val lutName = safeDisplayName.removeSuffix(".cube")
         activeLutName = lutName
 
         prefs.edit()
@@ -222,6 +243,26 @@ class LutManager(private val context: Context) {
 
     fun listCachedLuts(): List<File> {
         return lookDir.listFiles { file -> file.extension.equals("cube", ignoreCase = true) }?.toList() ?: emptyList()
+    }
+
+    /** Max accepted custom .cube file size, in bytes (10 MB). Prevents unbounded
+     *  disk/memory use from a maliciously huge or corrupt LUT file. */
+    private val MAX_CUBE_FILE_BYTES = 10L * 1024 * 1024
+
+    /**
+     * Strips path separators and any character that isn't safe in a filesystem leaf
+     * name, so a hostile content-provider-supplied DISPLAY_NAME (e.g. containing
+     * "../../" segments) can never escape lookDir.
+     */
+    private fun sanitizeLutFileName(rawName: String): String {
+        val leafOnly = rawName.substringAfterLast('/').substringAfterLast('\\')
+        val cleaned = leafOnly.replace(Regex("[^A-Za-z0-9._-]"), "_").take(100)
+        val withExtension = if (cleaned.lowercase(Locale.US).endsWith(".cube")) {
+            cleaned
+        } else {
+            "${cleaned}.cube"
+        }
+        return withExtension.ifBlank { "custom_${System.currentTimeMillis()}.cube" }
     }
 
     private fun getFileNameFromUri(uri: Uri): String? {

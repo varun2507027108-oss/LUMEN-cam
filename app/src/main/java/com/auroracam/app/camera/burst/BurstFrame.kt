@@ -4,6 +4,44 @@ import android.media.Image
 import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentLinkedQueue
+
+/**
+ * Reuses direct ByteBuffers across burst captures to avoid repeated ~11.5MB/frame
+ * allocation (Y+U+V at typical 3200x2400 capture size) on every shutter press.
+ * Buffers are keyed by exact capacity so a pool entry is only reused when the
+ * requested size matches exactly (capture size is fixed per camera session, so in
+ * practice this converges to a small number of pooled buffers almost immediately).
+ */
+object YuvBufferPool {
+    private const val TAG = "YuvBufferPool"
+    private val freeBuffers = ConcurrentLinkedQueue<ByteBuffer>()
+
+    fun acquire(capacity: Int): ByteBuffer {
+        val iterator = freeBuffers.iterator()
+        while (iterator.hasNext()) {
+            val candidate = iterator.next()
+            if (candidate.capacity() == capacity) {
+                iterator.remove()
+                candidate.clear()
+                return candidate
+            }
+        }
+        return ByteBuffer.allocateDirect(capacity).order(ByteOrder.nativeOrder())
+    }
+
+    fun release(buffer: ByteBuffer) {
+        buffer.clear()
+        freeBuffers.offer(buffer)
+    }
+
+    /** Drops all pooled buffers, e.g. on camera close / low-memory signal. */
+    fun clear() {
+        val count = freeBuffers.size
+        freeBuffers.clear()
+        if (count > 0) Log.i(TAG, "Cleared $count pooled YUV buffers")
+    }
+}
 
 data class RawYuvFrame(
     val width: Int,
@@ -18,6 +56,20 @@ data class RawYuvFrame(
     val exposureTimeNs: Long,
     val iso: Int
 ) {
+    /**
+     * Returns this frame's buffers to the shared pool. Call this once the frame is
+     * fully done being read (i.e. after alignment + merge have consumed it and it
+     * will not be touched again) — NOT immediately after creation, and NOT before
+     * confirming every downstream consumer (BurstAligner, the GPU merge pass) has
+     * finished reading from yBuffer/uBuffer/vBuffer. Releasing too early will corrupt
+     * a buffer that's still in use elsewhere.
+     */
+    fun release() {
+        YuvBufferPool.release(yBuffer)
+        YuvBufferPool.release(uBuffer)
+        YuvBufferPool.release(vBuffer)
+    }
+
     companion object {
         private const val TAG = "BurstFrame"
         private var hasLoggedFormat = false
@@ -26,6 +78,8 @@ data class RawYuvFrame(
          * Extracts tight, contiguous direct ByteBuffers from a YUV_420_888 Image.
          * Handles rowStride != width and pixelStride in {1, 2}.
          * Caller MUST close the original image immediately after calling fromImage().
+         * Buffers are drawn from YuvBufferPool where possible; call release() on the
+         * returned RawYuvFrame once fully consumed to return them to the pool.
          */
         fun fromImage(
             image: Image,
@@ -54,8 +108,8 @@ data class RawYuvFrame(
                 Log.i(TAG, "CAPTURE burst-format: width=$width, height=$height, yRowStride=$yRowStride, yPixStride=$yPixelStride, uvRowStride=$uRowStride, uvPixStride=$uPixelStride, path=${if (uPixelStride == 2) "DEINTERLEAVE" else "DIRECT"}")
             }
 
-            // 1. Extract Y plane into contiguous direct buffer (width x height)
-            val yDirect = ByteBuffer.allocateDirect(width * height).order(ByteOrder.nativeOrder())
+            // 1. Extract Y plane into contiguous direct buffer (width x height), drawn from pool
+            val yDirect = YuvBufferPool.acquire(width * height)
             val yBuf = yPlane.buffer
             if (yRowStride == width) {
                 val origPos = yBuf.position()
@@ -76,11 +130,11 @@ data class RawYuvFrame(
             }
             yDirect.rewind()
 
-            // 2. Extract U and V planes into contiguous direct buffers (width/2 x height/2)
+            // 2. Extract U and V planes into contiguous direct buffers (width/2 x height/2), drawn from pool
             val uvWidth = width / 2
             val uvHeight = height / 2
-            val uDirect = ByteBuffer.allocateDirect(uvWidth * uvHeight).order(ByteOrder.nativeOrder())
-            val vDirect = ByteBuffer.allocateDirect(uvWidth * uvHeight).order(ByteOrder.nativeOrder())
+            val uDirect = YuvBufferPool.acquire(uvWidth * uvHeight)
+            val vDirect = YuvBufferPool.acquire(uvWidth * uvHeight)
 
             val uBuf = uPlane.buffer
             val vBuf = vPlane.buffer

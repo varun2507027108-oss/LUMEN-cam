@@ -527,6 +527,8 @@ fun CameraScreen() {
                                                     cropped.recycle()
                                                 }
                                                 mergedBitmap.recycle()
+                                                // Release YUV buffers back to pool now that GPU merge has consumed them
+                                                frames.forEach { it.release() }
                                                 val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
                                                 withContext(Dispatchers.Main) {
                                                     lastCapturedUri = uri

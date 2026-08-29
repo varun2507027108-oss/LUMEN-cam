@@ -13,6 +13,7 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
+import com.auroracam.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -150,8 +151,10 @@ object CaptureSaver {
             val isoStr = telemetry?.iso?.toString() ?: "N/A"
             val expStr = telemetry?.expTimeFormatted ?: "N/A"
             val sizeStr = "${bitmap.width}x${bitmap.height}"
-            Log.i(TAG, "CAPTURE $fileName  ISO=$isoStr ExpTime=$expStr size=$sizeStr")
-            Log.i(TAG, "Saved image: $uri (path: Pictures/$ALBUM_NAME/$fileName)")
+            if (BuildConfig.DEBUG) {
+                Log.i(TAG, "CAPTURE $fileName  ISO=$isoStr ExpTime=$expStr size=$sizeStr")
+                Log.i(TAG, "Saved image: $uri (path: Pictures/$ALBUM_NAME/$fileName)")
+            }
             uri
         } catch (e: Exception) {
             Log.e(TAG, "Error writing image $fileName to MediaStore", e)
@@ -197,8 +200,10 @@ object CaptureSaver {
             val isoStr = telemetry?.iso?.toString() ?: "N/A"
             val expStr = telemetry?.expTimeFormatted ?: "N/A"
             val sizeStr = if (width > 0 && height > 0) "${width}x${height}" else "N/A"
-            Log.i(TAG, "CAPTURE $fileName  ISO=$isoStr ExpTime=$expStr size=$sizeStr bytes=${jpegBytes.size}")
-            Log.i(TAG, "Saved image: $uri (path: Pictures/$ALBUM_NAME/$fileName, size: ${jpegBytes.size} bytes / ${"%.1f".format(jpegBytes.size / 1024.0)} KB)")
+            if (BuildConfig.DEBUG) {
+                Log.i(TAG, "CAPTURE $fileName  ISO=$isoStr ExpTime=$expStr size=$sizeStr bytes=${jpegBytes.size}")
+                Log.i(TAG, "Saved image: $uri (path: Pictures/$ALBUM_NAME/$fileName, size: ${jpegBytes.size} bytes / ${"%.1f".format(jpegBytes.size / 1024.0)} KB)")
+            }
             uri
         } catch (e: Exception) {
             Log.e(TAG, "Error writing image $fileName to MediaStore", e)
@@ -243,8 +248,10 @@ object CaptureSaver {
 
             val isoStr = telemetry?.iso?.toString() ?: "N/A"
             val expStr = telemetry?.expTimeFormatted ?: "N/A"
-            Log.i(TAG, "DNG CAPTURE $fileName  ISO=$isoStr ExpTime=$expStr")
-            Log.i(TAG, "Saved DNG: $uri (path: Pictures/$ALBUM_NAME/$fileName)")
+            if (BuildConfig.DEBUG) {
+                Log.i(TAG, "DNG CAPTURE $fileName  ISO=$isoStr ExpTime=$expStr")
+                Log.i(TAG, "Saved DNG: $uri (path: Pictures/$ALBUM_NAME/$fileName)")
+            }
             uri
         } catch (e: Exception) {
             Log.e(TAG, "Error writing DNG $fileName to MediaStore", e)
@@ -340,4 +347,3 @@ object CaptureSaver {
         }
     }
 }
-

@@ -54,7 +54,19 @@ object CubeParser {
         var rawRgb = FloatArray(33 * 33 * 33 * 3)
         var rawCount = 0
 
+        // Absolute worst-case cap, used only before LUT_3D_SIZE is known (or when
+        // it's declared last / inferred from row count). Once LUT_3D_SIZE is parsed,
+        // maxAllowedFloats below is tightened to the exact expected size, so an
+        // oversized file is rejected immediately instead of after repeated
+        // array-doubling allocations.
+        var maxAllowedFloats = 64 * 64 * 64 * 3
+
         fun addRgb(r: Float, g: Float, b: Float) {
+            if (rawCount + 3 > maxAllowedFloats) {
+                throw IllegalArgumentException(
+                    "LUT data exceeds maximum allowed entries for declared/max LUT_3D_SIZE"
+                )
+            }
             if (rawCount + 3 > rawRgb.size) {
                 rawRgb = rawRgb.copyOf(maxOf(rawRgb.size * 2, rawCount + 3))
             }
@@ -81,8 +93,15 @@ object CubeParser {
                     if (size != 0 && size != n) throw IllegalArgumentException("Conflicting LUT_3D_SIZE declarations")
                     size = n
                     val expectedFloats = size * size * size * 3
+                    // Tighten the cap now that the declared size is known, so any
+                    // subsequent excess data rows are rejected immediately.
+                    maxAllowedFloats = expectedFloats
                     if (rawRgb.size < expectedFloats) {
                         rawRgb = FloatArray(expectedFloats)
+                    } else if (rawCount > expectedFloats) {
+                        throw IllegalArgumentException(
+                            "LUT data rows before LUT_3D_SIZE exceed declared size"
+                        )
                     }
                     continue
                 }

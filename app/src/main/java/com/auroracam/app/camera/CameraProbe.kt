@@ -23,6 +23,12 @@ import android.view.Surface
 object CameraProbe {
     private const val TAG = "CameraProbe"
 
+    // Shared, reused executor for session-configuration support checks. Avoids
+    // leaking a new thread pool on every probeCameraCapabilities /
+    // checkSessionConfigurationSupport call.
+    private val probeExecutor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newSingleThreadExecutor()
+
     data class ProbeResult(
         val backCameraId: String,
         val availableYuvSizes: List<Size>,
@@ -75,12 +81,18 @@ object CameraProbe {
         val resolvedYuvSize = supportedCandidate ?: yuvSizes.maxByOrNull { it.width * it.height }
         Log.i(TAG, "PROBE 0.2: Resolved capture YUV size candidate = ${resolvedYuvSize?.width}x${resolvedYuvSize?.height}")
 
+        // isPrivYuvSupported / isPrivYuvJpegSupported are placeholders here — the
+        // authoritative check happens in checkSessionConfigurationSupport() once a
+        // CameraDevice + real Surfaces exist. This static probe can only confirm the
+        // format appears in the StreamConfigurationMap, not that a live session
+        // combining preview+YUV(+JPEG) will actually be accepted by the device.
+        val privYuvAppearsSupported = yuvSizes.isNotEmpty()
         Log.i(TAG, "================ PHASE 0.1/0.2 PROBES COMPLETE ================")
         return ProbeResult(
             backCameraId = backCameraId,
             availableYuvSizes = yuvSizes.toList(),
-            isPrivYuvSupported = true,
-            isPrivYuvJpegSupported = true,
+            isPrivYuvSupported = privYuvAppearsSupported,
+            isPrivYuvJpegSupported = privYuvAppearsSupported,
             resolvedYuvSize = resolvedYuvSize,
             maxAnalogSensitivity = maxAnalogIso
         )
@@ -104,7 +116,7 @@ object CameraProbe {
                 val sessionConfigA = SessionConfiguration(
                     SessionConfiguration.SESSION_REGULAR,
                     outputConfigsA,
-                    java.util.concurrent.Executors.newSingleThreadExecutor(),
+                    probeExecutor,
                     object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(session: CameraCaptureSession) {}
                         override fun onConfigureFailed(session: CameraCaptureSession) {}
@@ -123,7 +135,7 @@ object CameraProbe {
                     val sessionConfigB = SessionConfiguration(
                         SessionConfiguration.SESSION_REGULAR,
                         outputConfigsB,
-                        java.util.concurrent.Executors.newSingleThreadExecutor(),
+                        probeExecutor,
                         object : CameraCaptureSession.StateCallback() {
                             override fun onConfigured(session: CameraCaptureSession) {}
                             override fun onConfigureFailed(session: CameraCaptureSession) {}
