@@ -41,18 +41,23 @@ class CameraController(
     }
 
     fun onPause() {
-        Log.i(TAG, "onPause: closing camera")
+        Log.i(TAG, "onPause: closing camera and invalidating stale SurfaceTexture")
         captureEngine.closeCamera()
+        surfaceTexture = null // Invalidate — GLSurfaceView/Renderer will hand us a fresh live one on resume
     }
 
     fun onResume() {
-        Log.i(TAG, "onResume: re-opening camera")
-        rebindCamera()
+        Log.i(TAG, "onResume: waiting for GLSurfaceView/Renderer to hand back a live SurfaceTexture")
+        // Do NOT call rebindCamera() here with a possibly-stale/destroyed surface.
+        // onSurfaceTextureReady() is the single authoritative trigger once the GL context is live.
     }
 
     @Synchronized
     private fun rebindCamera() {
-        val st = surfaceTexture ?: return
+        val st = surfaceTexture ?: run {
+            Log.d(TAG, "rebindCamera: surfaceTexture is null, waiting for surface ready")
+            return
+        }
         captureEngine.open(
             st = st,
             isPreviewHd = isPreviewBufferHd(),

@@ -193,7 +193,6 @@ fun CameraScreen() {
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        cameraController.startCamera()
 
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
@@ -237,6 +236,7 @@ fun CameraScreen() {
                 factory = { ctx ->
                     GLSurfaceView(ctx).apply {
                         glSurfaceViewRef = this
+                        preserveEGLContextOnPause = true
                         setEGLContextClientVersion(3)
                         val renderer = AuroraRenderer(
                             glSurfaceView = this,

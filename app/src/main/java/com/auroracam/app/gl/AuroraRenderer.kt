@@ -277,6 +277,7 @@ class AuroraRenderer(
         previewSceneFbo = Fbo(width, height, useHalfFloat = isLookPrecision16f)
 
         updateAspectMatrix(width, height)
+        surfaceTexture?.let { onSurfaceReady(it) }
     }
 
     private fun updateAspectMatrix(width: Int, height: Int) {

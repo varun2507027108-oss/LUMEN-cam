@@ -37,6 +37,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -86,6 +87,7 @@ class Camera2CaptureEngine(
 
     private val cameraLock = Any()
     private val isOpeningOrOpen = AtomicBoolean(false)
+    private val openGeneration = AtomicInteger(0)
 
     private fun startBackgroundThread() {
         synchronized(cameraLock) {
@@ -112,6 +114,7 @@ class Camera2CaptureEngine(
     }
 
     fun closeCamera() {
+        openGeneration.incrementAndGet()
         synchronized(cameraLock) {
             try {
                 isOpeningOrOpen.set(false)
@@ -139,6 +142,7 @@ class Camera2CaptureEngine(
     ) {
         synchronized(cameraLock) {
             closeCamera()
+            val myGen = openGeneration.incrementAndGet()
             startBackgroundThread()
             surfaceTexture = st
 
@@ -196,27 +200,28 @@ class Camera2CaptureEngine(
                 @SuppressLint("MissingPermission")
                 cameraManager.openCamera(currentCameraId, object : CameraDevice.StateCallback() {
                     override fun onOpened(device: CameraDevice) {
-                        Log.i(TAG, "CameraDevice onOpened: id=$currentCameraId")
+                        Log.i(TAG, "CameraDevice onOpened: id=$currentCameraId gen=$myGen (activeGen=${openGeneration.get()})")
                         synchronized(cameraLock) {
-                            if (!isOpeningOrOpen.get()) {
-                                device.close()
+                            if (openGeneration.get() != myGen || !isOpeningOrOpen.get()) {
+                                Log.w(TAG, "CameraDevice onOpened discarded: superseded by newer generation")
+                                try { device.close() } catch (e: Exception) {}
                                 return
                             }
                             cameraDevice = device
-                            createCameraSession(onOpened)
+                            createCameraSession(myGen, onOpened)
                         }
                     }
 
                     override fun onDisconnected(device: CameraDevice) {
-                        Log.w(TAG, "CameraDevice onDisconnected")
+                        Log.w(TAG, "CameraDevice onDisconnected gen=$myGen")
                         synchronized(cameraLock) {
-                            device.close()
+                            try { device.close() } catch (e: Exception) {}
                             if (cameraDevice == device) cameraDevice = null
                         }
                     }
 
                     override fun onError(device: CameraDevice, error: Int) {
-                        Log.e(TAG, "CameraDevice onError: code=$error")
+                        Log.e(TAG, "CameraDevice onError: code=$error gen=$myGen")
                         synchronized(cameraLock) {
                             try {
                                 device.close()
@@ -234,7 +239,7 @@ class Camera2CaptureEngine(
         }
     }
 
-    private fun createCameraSession(onSessionReady: (() -> Unit)?) {
+    private fun createCameraSession(generation: Int, onSessionReady: (() -> Unit)?) {
         val device = cameraDevice ?: return
         val preview = previewSurface ?: return
         val yuvReader = captureYuvReader ?: return
@@ -254,16 +259,24 @@ class Camera2CaptureEngine(
             @Suppress("DEPRECATION")
             device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
-                    Log.i(TAG, "=== CAMERA2 CAPTURE SESSION CONFIGURED SUCCESSFULLY ===")
-                    captureSession = session
-                    isProbeCompleted = true
+                    Log.i(TAG, "=== CAMERA2 CAPTURE SESSION CONFIGURED SUCCESSFULLY (gen=$generation) ===")
+                    synchronized(cameraLock) {
+                        if (openGeneration.get() != generation || cameraDevice == null) {
+                            Log.w(TAG, "CaptureSession onConfigured discarded: superseded by newer generation")
+                            try { session.close() } catch (e: Exception) {}
+                            return
+                        }
+                        captureSession = session
+                        isProbeCompleted = true
 
-                    startRepeatingPreview()
-                    onSessionReady?.invoke()
+                        startRepeatingPreview()
+                        onSessionReady?.invoke()
+                    }
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
-                    Log.e(TAG, "CameraCaptureSession onConfigureFailed")
+                    Log.e(TAG, "CameraCaptureSession onConfigureFailed (gen=$generation)")
+                    try { session.close() } catch (e: Exception) {}
                 }
             }, cameraHandler)
         } catch (e: Exception) {
