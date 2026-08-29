@@ -8,12 +8,15 @@ AuroraCam is a cinema-grade, tactile creative camera application for Android bui
 
 ## 🌟 Key Features
 
-### 🎛️ Leica / Halide / Blackmagic Tactile Industrial UI
+### 🎛️ Cinematic Photographic Control Surface
 - **Obsidian & Warm Amber Design System:** Pure industrial camera aesthetics built on deep matte surfaces (`SurfaceDark` `0xFF0F1115`), hairline borders (`0xFF2B313D`), smoked glass scrims, monospaced technical readouts, and a dedicated **Leica Warm Amber** (`0xFFE5A00D`) accent.
-- **Inset-Aware Diagnostic Top Bar:** Positioned safely below native system status bars, showing telemetry pills (`[ 24 FPS ]`, `[ HDR ]`, `[ 4:3 ]`, `[ AUTO / PRO ]`).
-- **Direct-Access Looks Snapping Dial:** Horizontal text dial situated right above the shutter button for instant switching between analog film looks without opening menus.
-- **Mechanical Shutter Dock:** 80.dp tactile shutter with inner solid disc scale animations, 48.dp squircle gallery preview thumbnail, and one-tap creative drawer access.
-- **Compact Creative Controls Bottom Sheet:** Low-profile half-sheet ($\le 35\%$ screen height) keeping the live viewfinder fully visible for framing while tuning parameters across `MODES`, `LOOKS`, `EFFECTS`, and `PRO` tabs.
+- **Minimal Viewfinder Status HUD:** Positioned cleanly below system insets, presenting real-time telemetry:
+  - **Quick Flash Selector:** Instant toggle on the main HUD (`[OFF]`, `[AUTO]`, `[ON]`, `[TORCH]`).
+  - **Interactive Shutter Speed Selector:** Tap the active shutter speed to reveal a quick-select manual exposure tray (`AUTO`, `1/4000s` down to `2s`).
+  - **Live Telemetry:** Dynamic indicators for ISO, EV offset, FPS, and RAW/HDR status.
+- **Direct-Access Looks Snapping Dial:** Horizontal dial positioned above the shutter button for instant switching between analog film looks without opening menus.
+- **Mechanical Shutter Dock:** 80dp tactile shutter with inner solid disc scale animations, 48dp squircle gallery preview thumbnail, and one-tap creative drawer access.
+- **Compact Creative Menu:** Low-profile overlay sheet keeping the live viewfinder fully visible for framing while tuning parameters across `MODES`, `LOOKS`, `EFFECTS`, and `PRO` tabs.
 
 ---
 
@@ -26,7 +29,7 @@ AuroraCam is a cinema-grade, tactile creative camera application for Android bui
   - **Kodak Portra 400:** Iconic portrait negative film look with lifted matte blacks ($+0.035$), golden-peach skin tones, and ivory highlight roll-off.
   - **Aurora Warm:** Golden sunset warmth and gentle atmospheric glow.
   - **Monochrome & Chrome:** High-contrast street photography black & white and vintage chrome grades.
-- **Custom LUT Import:** Import custom `.cube` grading LUTs from device storage via Android Storage Access Framework (SAF).
+- **Custom LUT Import (`.CUBE`):** Seamlessly import external `.cube` grading LUTs from device storage via Android Storage Access Framework (SAF).
 - **16-Bit Float HDR Pipeline:** High dynamic range intermediate framebuffers (`GL_RGBA16F`) preventing color banding in dark gradients and bright highlights.
 - **Look Intensity & Halation Glow:** Real-time bloom/glow blur shader simulating vintage analog film halation around high-contrast edges.
 
@@ -38,14 +41,15 @@ AuroraCam is a cinema-grade, tactile creative camera application for Android bui
 - **👻 Temporal Echo (Ghost Trails):** 3-frame GPU history ring buffer blending (`glBlitFramebuffer`) with exponential decay to produce vintage multi-image motion trails.
 - **🏃 Motion-Only Exposure:** Real-time luminance frame-differencing shader pass isolating moving subjects from static backgrounds with adjustable motion thresholds.
 - **✨ Light Trails Mode:** Ping-Pong accumulation FBO max/decay blend engine simulating long exposure light painting in real-time with instant reset controls.
+- **🎯 Focus Peaking Pass:** High-pass Sobel filter edge detection highlighting in-focus planes in vibrant green overlay.
 
 ---
 
 ### 🎯 Precision Cinema Focus Reticle & Integrated Exposure Slider
-- **Tap-to-Focus 3A Metering:** Tap anywhere on the viewfinder to dynamically update Camera2 `CONTROL_AF_REGIONS` and `CONTROL_AE_REGIONS` with auto-focus trigger cycles.
+- **Instant 0ms Tap-to-Focus:** Tap anywhere on the viewfinder to dynamically update Camera2 `CONTROL_AF_REGIONS` and `CONTROL_AE_REGIONS` with auto-focus trigger cycles.
 - **Cinema-Grade Reticle:** Minimalist corner chamfered L-brackets with center targeting crosshair and target dot.
-- **AE/AF Lock Capsule:** One-tap lock pill with long-press haptic feedback to pin exposure and focus distance.
-- **Solar Vernier Exposure Ladder:** Precision vertical draggable solar ladder with 1/3-stop increments (-2.0 EV to +2.0 EV) and high-contrast digital readout.
+- **AE/AF Lock Capsule (`[AE/AF-L]`):** Reticle-mounted lock button to instantly pin exposure and focus distance.
+- **Solar Vernier Exposure Ladder:** Precision vertical draggable solar ladder with 1/3-stop increments (-2.0 EV to +2.0 EV) that stays visible throughout active drag gestures.
 
 ---
 
@@ -53,6 +57,83 @@ AuroraCam is a cinema-grade, tactile creative camera application for Android bui
 - **XPAN Panoramic (65:24):** True cinematic ultra-wide crop with orange viewfinder corner guides.
 - **Square (1:1):** Classic medium format square framing with translucent letterboxing.
 - **Standard (4:3):** Full sensor resolution capture.
+
+---
+
+## 🏛️ System & Rendering Architecture
+
+### GPU Multi-Pass Pipeline
+
+```mermaid
+flowchart TD
+    subgraph Camera_HAL [Camera2 HAL Stream]
+        Sensor[Image Sensor Stream] -->|YUV_420_888 / OES| SurfaceTex[SurfaceTexture OES]
+    end
+
+    subgraph GPU_Pipeline [OpenGL ES 3.0 Multi-Pass Shader Engine]
+        SurfaceTex -->|GL_TEXTURE_EXTERNAL_OES| BasePass[Base Pass: Texture Unpack & Transform]
+        BasePass --> FBO_HDR[16-Bit Float HDR FBO (GL_RGBA16F)]
+        
+        FBO_HDR --> ModeRouter{Creative Mode Pass}
+        ModeRouter -->|Standard / Burst| LUTPass[3D LUT Color Grade (GL_TEXTURE_3D)]
+        ModeRouter -->|Double Exposure| BlendPass[Double Exposure FBO Blender]
+        ModeRouter -->|Temporal Echo| EchoPass[History Ring Buffer (glBlitFramebuffer)]
+        ModeRouter -->|Motion Only| MotionPass[Frame Differencing Pass]
+        ModeRouter -->|Light Trails| AccumPass[Ping-Pong Accumulation FBO]
+        
+        BlendPass --> LUTPass
+        EchoPass --> LUTPass
+        MotionPass --> LUTPass
+        AccumPass --> LUTPass
+        
+        LUTPass --> BloomPass[Halation & Bloom Pass]
+        BloomPass --> PeakingPass[Sobel Focus Peaking Pass]
+    end
+
+    subgraph Output_Target [Render Destinations]
+        PeakingPass -->|Viewport Blit| Display[GLSurfaceView / Viewfinder]
+        BloomPass -->|glReadPixels RGBA8| CaptureEngine[Still Capture / MediaStore]
+    end
+```
+
+### UI Control Surface & State Flow
+
+```mermaid
+graph LR
+    subgraph User_Touch_Surface [Interactive Control Layer]
+        HUD[Top Status HUD]
+        Viewfinder[Viewfinder Viewport]
+        Dial[Signature Looks Dial]
+        Shutter[Mechanical Shutter Dock]
+        Sheet[Creative Parameter Drawer]
+    end
+
+    subgraph Actions [Interaction Handlers]
+        FlashToggle[Flash Mode Cycle: OFF / AUTO / ON / TORCH]
+        ShutterTray[Shutter Speed Selector Tray: 1/4000s - 2s]
+        FocusLock[0ms Tap Focus & AE/AF Lock Reticle]
+        VernierDrag[Solar Exposure Vernier Drag]
+        LutSelect[Select Procedural / SAF .CUBE LUT]
+        BurstTrigger[Trigger Capture / QuickStack Burst]
+    end
+
+    subgraph Camera_Engine [Camera & Renderer Controllers]
+        CamCtrl[CameraController]
+        Cam2HAL[Camera2 HAL Engine]
+        GLRender[AuroraRenderer / LutManager]
+    end
+
+    HUD -->|Tap Flash| FlashToggle --> CamCtrl
+    HUD -->|Tap Shutter Speed| ShutterTray --> CamCtrl
+    Viewfinder -->|Tap Viewport| FocusLock --> CamCtrl
+    Viewfinder -->|Drag Reticle| VernierDrag --> CamCtrl
+    Dial -->|Snap Dial| LutSelect --> GLRender
+    Sheet -->|Import .CUBE / Tune Params| LutSelect --> GLRender
+    Shutter -->|Press Shutter| BurstTrigger --> CamCtrl
+
+    CamCtrl --> Cam2HAL
+    CamCtrl --> GLRender
+```
 
 ---
 
@@ -96,3 +177,4 @@ Pushing a tag formatted as `v*` (e.g. `v0.4.0`) automatically triggers GitHub Ac
 ## 📄 License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
