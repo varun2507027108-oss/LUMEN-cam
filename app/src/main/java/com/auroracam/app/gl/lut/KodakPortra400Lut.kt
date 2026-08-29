@@ -19,29 +19,29 @@ object KodakPortra400Lut {
             var h = lch.h
 
             // 1. Film Negative Response Curve with Lifted Matte Black Floor
-            l = 0.035f + (l * 0.72f + OklabColor.smoothstep(0f, 1f, l) * 0.28f) * 0.965f
+            l = 0.038f + (l * 0.70f + OklabColor.smoothstep(0f, 1f, l) * 0.30f) * 0.962f
 
-            // 2. Golden-Peach Skin Tone Melanin Enhancer (Centered at 52° in OKLch)
-            val skinWeight = OklabColor.hueBellWeight(h, centerHue = 52f, widthDeg = 30f)
+            // 2. Golden-Peach Melanin & Warm Midtone Enhancer (+18% magnitude, wider 40° bell)
+            val skinWeight = OklabColor.hueBellWeight(h, centerHue = 52f, widthDeg = 40f)
             if (skinWeight > 0f) {
-                h += (52f - h) * 0.20f * skinWeight
-                c *= (1.0f + 0.10f * skinWeight)
+                h += (52f - h) * 0.24f * skinWeight
+                c *= (1.0f + 0.14f * skinWeight)
             }
 
-            // 3. Subtle Cool Cyan Shadow Bias (L < 0.35)
-            val shadowZone = 1.0f - OklabColor.smoothstep(0.0f, 0.35f, l)
+            // 3. Subtle Cool Cyan Shadow Bias (L < 0.32)
+            val shadowZone = 1.0f - OklabColor.smoothstep(0.0f, 0.32f, l)
             if (shadowZone > 0f) {
-                h += (195f - h) * 0.10f * shadowZone
+                h += (195f - h) * 0.08f * shadowZone
             }
 
-            // 4. Warm Ivory Highlight Shoulder (L > 0.75)
-            if (l > 0.75f) {
-                val highZone = (l - 0.75f) / 0.25f
-                h += (60f - h) * 0.12f * highZone
+            // 4. Warm Ivory Highlight Shoulder (Starting earlier at L > 0.68)
+            if (l > 0.68f) {
+                val highZone = (l - 0.68f) / 0.32f
+                h += (58f - h) * 0.14f * highZone
             }
 
             // 5. Refined Organic Film Chroma
-            c *= 0.92f
+            c *= 0.94f
 
             Oklch(
                 l = l.coerceIn(0f, 1f),

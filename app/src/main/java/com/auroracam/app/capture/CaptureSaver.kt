@@ -53,9 +53,15 @@ object CaptureSaver {
             intensityTag = "I000"
         } else {
             lookTag = when {
+                lookName.contains("Amber", ignoreCase = true) -> "AMB"
+                lookName.contains("Steel", ignoreCase = true) -> "MST"
+                lookName.contains("Teal", ignoreCase = true) -> "CYN"
+                lookName.contains("Bleach", ignoreCase = true) -> "BLU"
+                lookName.contains("Gold", ignoreCase = true) -> "GLD"
                 lookName.contains("Warm", ignoreCase = true) -> "WRM"
                 lookName.contains("Chrome", ignoreCase = true) -> "CHR"
                 lookName.contains("Mono", ignoreCase = true) -> "MON"
+                lookName.contains("Vint", ignoreCase = true) -> "VNT"
                 else -> "CUB"
             }
             val intPct = (intensity * 100f).toInt().coerceIn(0, 100)

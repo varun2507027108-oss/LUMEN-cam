@@ -1,7 +1,12 @@
 package com.auroracam.app.gl
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
+import android.graphics.Typeface
 import android.opengl.GLES11Ext
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
@@ -11,7 +16,15 @@ import android.os.SystemClock
 import android.util.Log
 import com.auroracam.app.camera.burst.BurstAligner
 import com.auroracam.app.capture.CaptureSaver
+import com.auroracam.app.capture.LookUniforms
+import com.auroracam.app.capture.LutManager
 import com.auroracam.app.gl.lut.AuroraWarmLut
+import com.auroracam.app.gl.lut.ChromeLut
+import com.auroracam.app.gl.lut.FujiClassicChromeLut
+import com.auroracam.app.gl.lut.HasselbladNaturalLut
+import com.auroracam.app.gl.lut.KodakPortra400Lut
+import com.auroracam.app.gl.lut.LeicaCharacterLut
+import com.auroracam.app.gl.lut.MonoLut
 import com.auroracam.app.gl.lut.ParsedCube
 import com.auroracam.app.gl.passes.BurstMergePass
 import com.auroracam.app.gl.passes.ChromaticAberrationPass
@@ -102,6 +115,7 @@ class AuroraRenderer(
     @Volatile var lookGrain: Float = 0.04f
     @Volatile var lookVignette: Float = 0.12f
     @Volatile var lookHalation: Float = 0.20f
+    @Volatile var lookHalationThreshold: Float = 0.75f
     @Volatile private var _isLookPrecision16f: Boolean = true
     val isLookPrecision16f: Boolean get() = _isLookPrecision16f
 
@@ -132,6 +146,7 @@ class AuroraRenderer(
 
     @Volatile private var isFirstCapturePending = false
     @Volatile private var pendingLutCube: ParsedCube? = null
+    @Volatile private var currentLutCube: ParsedCube? = null
 
     // Stats
     private var frameCount = 0
@@ -202,6 +217,7 @@ class AuroraRenderer(
         // Upload default procedural LUT (or pending imported LUT)
         val initialLut = pendingLutCube ?: AuroraWarmLut.generate()
         lutTexture.upload(initialLut)
+        currentLutCube = initialLut
         pendingLutCube = null
 
         firstExposureFbo?.release()
@@ -312,6 +328,7 @@ class AuroraRenderer(
         // Apply pending 3D LUT upload if requested off-thread
         pendingLutCube?.let { cube ->
             lutTexture.upload(cube)
+            currentLutCube = cube
             pendingLutCube = null
         }
 
@@ -469,6 +486,7 @@ class AuroraRenderer(
                 grain = lookGrain,
                 vignette = lookVignette,
                 halation = if (isLookEnabled) lookHalation else 0.0f,
+                halationThreshold = if (isLookEnabled) lookHalationThreshold else 0.75f,
                 timeSeconds = timeSeconds,
                 aspectRatio = aspect,
                 width = viewWidth,
@@ -494,6 +512,7 @@ class AuroraRenderer(
                 grain = lookGrain,
                 vignette = lookVignette,
                 halation = if (isLookEnabled) lookHalation else 0.0f,
+                halationThreshold = if (isLookEnabled) lookHalationThreshold else 0.75f,
                 timeSeconds = timeSeconds,
                 aspectRatio = aspect,
                 width = viewWidth,
@@ -530,6 +549,24 @@ class AuroraRenderer(
 
     fun updateLutCube(cube: ParsedCube) {
         pendingLutCube = cube
+        currentLutCube = cube
+        glSurfaceView.requestRender()
+    }
+
+    fun updateLookUniforms(
+        intensity: Float = lookIntensity,
+        halation: Float = lookHalation,
+        grain: Float = lookGrain,
+        vignette: Float = lookVignette,
+        chromaticAberration: Float = chromaticAberrationIntensity,
+        halationThreshold: Float = lookHalationThreshold
+    ) {
+        lookIntensity = intensity
+        lookHalation = halation
+        lookGrain = grain
+        lookVignette = vignette
+        chromaticAberrationIntensity = chromaticAberration
+        lookHalationThreshold = halationThreshold
         glSurfaceView.requestRender()
     }
 
@@ -654,6 +691,7 @@ class AuroraRenderer(
                         grain = lookGrain,
                         vignette = lookVignette,
                         halation = if (isLookEnabled) lookHalation else 0.0f,
+                        halationThreshold = if (isLookEnabled) lookHalationThreshold else 0.75f,
                         timeSeconds = timeSeconds,
                         aspectRatio = aspect,
                         width = w,
@@ -680,6 +718,7 @@ class AuroraRenderer(
                         grain = lookGrain,
                         vignette = lookVignette,
                         halation = lookHalation,
+                        halationThreshold = lookHalationThreshold,
                         timeSeconds = timeSeconds,
                         aspectRatio = aspect,
                         width = w,
@@ -730,6 +769,7 @@ class AuroraRenderer(
                     grain = lookGrain,
                     vignette = lookVignette,
                     halation = if (isLookEnabled) lookHalation else 0.0f,
+                    halationThreshold = if (isLookEnabled) lookHalationThreshold else 0.75f,
                     timeSeconds = timeSeconds,
                     aspectRatio = aspect,
                     width = w,
@@ -757,6 +797,7 @@ class AuroraRenderer(
                     grain = lookGrain,
                     vignette = lookVignette,
                     halation = if (isLookEnabled) lookHalation else 0.0f,
+                    halationThreshold = if (isLookEnabled) lookHalationThreshold else 0.75f,
                     timeSeconds = timeSeconds,
                     aspectRatio = aspect,
                     width = w,
@@ -831,6 +872,7 @@ class AuroraRenderer(
                         grain = lookGrain,
                         vignette = lookVignette,
                         halation = if (isLookEnabled) lookHalation else 0.0f,
+                        halationThreshold = if (isLookEnabled) lookHalationThreshold else 0.75f,
                         timeSeconds = timeSeconds,
                         aspectRatio = aspect,
                         width = w,
@@ -857,6 +899,7 @@ class AuroraRenderer(
                         grain = lookGrain,
                         vignette = lookVignette,
                         halation = lookHalation,
+                        halationThreshold = lookHalationThreshold,
                         timeSeconds = timeSeconds,
                         aspectRatio = aspect,
                         width = w,
@@ -942,6 +985,7 @@ class AuroraRenderer(
                         grain = lookGrain,
                         vignette = lookVignette,
                         halation = if (isLookEnabled) lookHalation else 0.0f,
+                        halationThreshold = if (isLookEnabled) lookHalationThreshold else 0.75f,
                         timeSeconds = timeSeconds,
                         aspectRatio = aspect,
                         width = width,
@@ -968,6 +1012,7 @@ class AuroraRenderer(
                         grain = lookGrain,
                         vignette = lookVignette,
                         halation = lookHalation,
+                        halationThreshold = lookHalationThreshold,
                         timeSeconds = timeSeconds,
                         aspectRatio = aspect,
                         width = width,
@@ -1049,6 +1094,7 @@ class AuroraRenderer(
                         grain = lookGrain,
                         vignette = lookVignette,
                         halation = if (isLookEnabled) lookHalation else 0.0f,
+                        halationThreshold = if (isLookEnabled) lookHalationThreshold else 0.75f,
                         timeSeconds = timeSeconds,
                         aspectRatio = aspect,
                         width = w,
@@ -1075,6 +1121,7 @@ class AuroraRenderer(
                         grain = lookGrain,
                         vignette = lookVignette,
                         halation = lookHalation,
+                        halationThreshold = lookHalationThreshold,
                         timeSeconds = timeSeconds,
                         aspectRatio = aspect,
                         width = w,
@@ -1098,6 +1145,254 @@ class AuroraRenderer(
             onDxStageChanged(DxStage.STAGE_1_EMPTY)
 
             onRenderFinished(firstBmp, secondBitmap, compositeBmp)
+        }
+    }
+
+    /**
+     * 7-Up Contact Sheet Grid Capture (Dev / Color Science Tool)
+     *
+     * Processes a single source frame through Local Tone Mapping and renders it across
+     * all 7 procedural built-in looks + 1 un-graded RAW baseline (8 tiles in a 2x4 grid),
+     * with visual metadata banners, and restores active LUT/uniform state on completion.
+     */
+    fun renderContactSheet7Up(
+        sourceBitmap: Bitmap,
+        onFinished: (Bitmap) -> Unit
+    ) {
+        glSurfaceView.queueEvent {
+            val srcW = sourceBitmap.width
+            val srcH = sourceBitmap.height
+
+            // 1. Upload source to GLES Texture
+            val texIds = IntArray(1)
+            GLES30.glGenTextures(1, texIds, 0)
+            val texSrc = texIds[0]
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texSrc)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, sourceBitmap, 0)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+            sourceBitmap.recycle()
+
+            // 2. Perform LTM base pass
+            val ltmFbo = Fbo(srcW, srcH, useHalfFloat = isLookPrecision16f)
+            ltmFbo.bind()
+            GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+            localToneMappingPass.render(
+                srcTextureId = texSrc,
+                width = srcW,
+                height = srcH,
+                shadowLift = 0.40f,
+                highlightCompress = 0.20f,
+                sharpening = 0.30f
+            )
+            ltmFbo.unbind(viewWidth, viewHeight)
+            GLES30.glDeleteTextures(1, texIds, 0)
+
+            // Define the 8 presets (1 RAW + 7 Looks)
+            data class ContactTile(
+                val title: String,
+                val subtitle: String,
+                val cubeProvider: (() -> ParsedCube)?,
+                val uniforms: LookUniforms
+            )
+
+            val tiles = listOf(
+                ContactTile(
+                    title = "01 • RAW (UNGRADED)",
+                    subtitle = "LTM Tone Mapping Only",
+                    cubeProvider = null,
+                    uniforms = LookUniforms(intensity = 0f)
+                ),
+                ContactTile(
+                    title = "02 • HASSELBLAD NATURAL",
+                    subtitle = "HNCS II • Faithful Tones",
+                    cubeProvider = { HasselbladNaturalLut.generate() },
+                    uniforms = LutManager.DEFAULT_LOOK_UNIFORMS[HasselbladNaturalLut.LUT_NAME] ?: LookUniforms()
+                ),
+                ContactTile(
+                    title = "03 • LEICA CHARACTER",
+                    subtitle = "Subtractive Red Density • High Dynamic Halation",
+                    cubeProvider = { LeicaCharacterLut.generate() },
+                    uniforms = LutManager.DEFAULT_LOOK_UNIFORMS[LeicaCharacterLut.LUT_NAME] ?: LookUniforms()
+                ),
+                ContactTile(
+                    title = "04 • FUJI CLASSIC CHROME",
+                    subtitle = "Softened Chroma • Deep Shadow Hardening",
+                    cubeProvider = { FujiClassicChromeLut.generate() },
+                    uniforms = LutManager.DEFAULT_LOOK_UNIFORMS[FujiClassicChromeLut.LUT_NAME] ?: LookUniforms()
+                ),
+                ContactTile(
+                    title = "05 • KODAK PORTRA 400",
+                    subtitle = "Melanin Warmth • Warm Ivory Highlight Roll-off",
+                    cubeProvider = { KodakPortra400Lut.generate() },
+                    uniforms = LutManager.DEFAULT_LOOK_UNIFORMS[KodakPortra400Lut.LUT_NAME] ?: LookUniforms()
+                ),
+                ContactTile(
+                    title = "06 • AURORA WARM",
+                    subtitle = "Golden Hour Luminance • Warm Shadow Fill",
+                    cubeProvider = { AuroraWarmLut.generate() },
+                    uniforms = LutManager.DEFAULT_LOOK_UNIFORMS[AuroraWarmLut.LUT_NAME] ?: LookUniforms()
+                ),
+                ContactTile(
+                    title = "07 • CHROME CONTRAST",
+                    subtitle = "Punchy S-Curve • Deepened Blacks",
+                    cubeProvider = { ChromeLut.generate() },
+                    uniforms = LutManager.DEFAULT_LOOK_UNIFORMS[ChromeLut.LUT_NAME] ?: LookUniforms()
+                ),
+                ContactTile(
+                    title = "08 • TRI-X 400 MONO",
+                    subtitle = "Spectral Pan-Monochrome • Silver Grain Structure",
+                    cubeProvider = { MonoLut.generate() },
+                    uniforms = LutManager.DEFAULT_LOOK_UNIFORMS[MonoLut.LUT_NAME] ?: LookUniforms()
+                )
+            )
+
+            val renderedBitmaps = mutableListOf<Bitmap>()
+            val tileFbo = Fbo(srcW, srcH, useHalfFloat = false)
+            val aspect = srcW.toFloat() / srcH.toFloat()
+
+            for (tile in tiles) {
+                tileFbo.bind()
+                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                if (tile.cubeProvider != null) {
+                    val cube = tile.cubeProvider.invoke()
+                    lutTexture.upload(cube)
+                    filmCurvePass.render(
+                        srcTextureId = ltmFbo.textureId,
+                        lutTextureId = lutTexture.textureId,
+                        lutSize = lutTexture.size,
+                        domainMin = lutTexture.domainMin,
+                        domainMax = lutTexture.domainMax,
+                        intensity = tile.uniforms.intensity,
+                        grain = tile.uniforms.grain,
+                        vignette = tile.uniforms.vignette,
+                        halation = tile.uniforms.halation,
+                        halationThreshold = tile.uniforms.halationThreshold,
+                        timeSeconds = 0f,
+                        aspectRatio = aspect,
+                        width = srcW,
+                        height = srcH
+                    )
+                } else {
+                    // RAW baseline - FilmCurvePass with intensity=0.0 directly passes clean LTM source texture
+                    filmCurvePass.render(
+                        srcTextureId = ltmFbo.textureId,
+                        lutTextureId = lutTexture.textureId,
+                        lutSize = lutTexture.size,
+                        domainMin = lutTexture.domainMin,
+                        domainMax = lutTexture.domainMax,
+                        intensity = 0.0f,
+                        grain = 0.0f,
+                        vignette = 0.0f,
+                        halation = 0.0f,
+                        halationThreshold = 0.75f,
+                        timeSeconds = 0f,
+                        aspectRatio = aspect,
+                        width = srcW,
+                        height = srcH
+                    )
+                }
+                val bmp = readFboToBitmap(tileFbo, flipY = false)
+                renderedBitmaps.add(bmp)
+            }
+
+            tileFbo.unbind(viewWidth, viewHeight)
+            tileFbo.release()
+            ltmFbo.release()
+
+            // 3. Restore active LUT on the GL texture
+            val restoreCube = currentLutCube ?: AuroraWarmLut.generate()
+            lutTexture.upload(restoreCube)
+
+            // 4. Stitch 2x4 Contact Sheet Canvas
+            val tileTargetW = 720
+            val tileTargetH = (720f * srcH / srcW).toInt()
+            val padding = 16
+            val headerH = 72
+            val bannerH = 52
+
+            val cols = 2
+            val rows = 4
+
+            val totalSheetW = padding * (cols + 1) + tileTargetW * cols
+            val totalSheetH = headerH + padding * (rows + 1) + tileTargetH * rows
+
+            val sheetBitmap = Bitmap.createBitmap(totalSheetW, totalSheetH, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(sheetBitmap)
+
+            // Background
+            val bgPaint = Paint().apply { color = Color.parseColor("#0F1115") }
+            canvas.drawRect(0f, 0f, totalSheetW.toFloat(), totalSheetH.toFloat(), bgPaint)
+
+            // Masthead
+            val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#E5A00D")
+                textSize = 28f
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            }
+            val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#8E95A5")
+                textSize = 16f
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            }
+            canvas.drawText("AURORA CAM // 7-UP LOOK CONTACT SHEET", padding.toFloat(), 38f, titlePaint)
+            canvas.drawText("Source: ${srcW}x${srcH} | OKLab/OKLch Perceptual Pipeline | 8 Simultaneous Renders", padding.toFloat(), 62f, subPaint)
+
+            // Masthead divider
+            val linePaint = Paint().apply {
+                color = Color.parseColor("#2B313D")
+                strokeWidth = 2f
+            }
+            canvas.drawLine(padding.toFloat(), headerH - 4f, (totalSheetW - padding).toFloat(), headerH - 4f, linePaint)
+
+            val borderPaint = Paint().apply {
+                color = Color.parseColor("#2B313D")
+                style = Paint.Style.STROKE
+                strokeWidth = 2f
+            }
+            val scrimPaint = Paint().apply {
+                color = Color.argb(200, 15, 17, 21)
+            }
+            val tileTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#F2F4F8")
+                textSize = 20f
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            }
+            val tileSubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#8E95A5")
+                textSize = 13f
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            }
+
+            for (i in 0 until 8) {
+                val col = i % cols
+                val row = i / cols
+
+                val left = padding + col * (tileTargetW + padding)
+                val top = headerH + padding + row * (tileTargetH + padding)
+                val right = left + tileTargetW
+                val bottom = top + tileTargetH
+
+                val bmp = renderedBitmaps[i]
+                val destRect = Rect(left, top, right, bottom)
+                canvas.drawBitmap(bmp, null, destRect, null)
+                canvas.drawRect(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat(), borderPaint)
+
+                // Draw metadata banner overlay at bottom of tile
+                val bannerTop = bottom - bannerH
+                canvas.drawRect(left.toFloat(), bannerTop.toFloat(), right.toFloat(), bottom.toFloat(), scrimPaint)
+                canvas.drawLine(left.toFloat(), bannerTop.toFloat(), right.toFloat(), bannerTop.toFloat(), linePaint)
+
+                val tile = tiles[i]
+                canvas.drawText(tile.title, (left + 12).toFloat(), (bannerTop + 24).toFloat(), tileTitlePaint)
+                canvas.drawText(tile.subtitle, (left + 12).toFloat(), (bannerTop + 44).toFloat(), tileSubPaint)
+
+                bmp.recycle()
+            }
+
+            CaptureSaver.logSizeGuard(sheetBitmap.width, sheetBitmap.height, expectedWidth = totalSheetW, expectedHeight = totalSheetH)
+            onFinished(sheetBitmap)
         }
     }
 

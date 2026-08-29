@@ -26,24 +26,27 @@ object LeicaCharacterLut {
             // 2. Signature Leica Warm-Amber Midtone Glow (Peaking at L = 0.45)
             val midDiff = abs(l - 0.45f)
             val midBell = (1.0f - (midDiff / 0.45f).coerceIn(0f, 1f)).let { it * it * (3.0f - 2.0f * it) }
-            l += 0.028f * midBell
+            l += 0.025f * midBell
 
-            // 3. Selective Warm-Tone Punch (+14% chroma in warm sector)
+            // 3. Selective Warm-Tone Punch & Subtractive Lightness-Chroma Coupling (~10% boost)
             val isWarmSector = (h in 15f..90f) || (h >= 345f)
             if (isWarmSector) {
-                c *= 1.14f
+                c *= 1.16f
+                // Subtractive density: saturated warm hues & reds deepen in perceived lightness
+                val chromaDensity = (c / 0.16f).coerceIn(0f, 1f)
+                l -= 0.038f * chromaDensity * (if (l > 0.18f) 1.0f else (l / 0.18f))
             } else {
-                c *= 0.96f
+                c *= 0.95f
             }
 
-            // 4. Warm Midtone Hue Pull towards Leica Amber (52°)
+            // 4. Warm Midtone Hue Pull towards Leica Amber (50°)
             if (midBell > 0f && isWarmSector) {
-                h += (52f - h) * 0.12f * midBell
+                h += (50f - h) * 0.15f * midBell
             }
 
             // 5. Deep Shadow Sculpting (crisp black floor)
             if (l < 0.22f) {
-                val shadowDrop = (1.0f - OklabColor.smoothstep(0.0f, 0.22f, l)) * 0.015f
+                val shadowDrop = (1.0f - OklabColor.smoothstep(0.0f, 0.22f, l)) * 0.018f
                 l -= shadowDrop
             }
 

@@ -26,8 +26,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.filled.BlurOn
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.Flare
+import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.FilterChip
@@ -41,6 +43,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,7 +62,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.auroracam.app.ui.theme.AmberGold
 import com.auroracam.app.ui.theme.DarkBackground
 import com.auroracam.app.ui.theme.ElevatedSurface
 import com.auroracam.app.ui.theme.SlateBorder
@@ -83,7 +85,9 @@ enum class WheelParameter(
     LIGHT_DECAY("Light Decay", "%", 0.94f, Icons.Default.Flare),
     CHROMATIC_ABERRATION("Aberration", "%", 0.35f, Icons.Default.BlurOn),
     LOOK_INTENSITY("Look Mix", "%", 1.0f, Icons.Default.ColorLens),
-    HALATION_GLOW("Glow", "%", 0.20f, Icons.Default.WbSunny)
+    HALATION_GLOW("Glow", "%", 0.20f, Icons.Default.WbSunny),
+    GRAIN("Grain", "%", 0.04f, Icons.Default.Grain),
+    VIGNETTE("Vignette", "%", 0.12f, Icons.Default.CameraAlt)
 }
 
 /**
@@ -108,44 +112,64 @@ fun ParameterWheel(
     var lastAngleRad by remember { mutableDoubleStateOf(0.0) }
     var lastHapticStep by remember { mutableIntStateOf(0) }
 
+    // Normalized internal value [0.0..1.0] for the dial sweep
+    var activeNorm by remember(currentParam) {
+        mutableFloatStateOf(
+            when (currentParam) {
+                WheelParameter.MOTION_THRESHOLD -> ((paramValue - 0.01f) / 0.39f).coerceIn(0.0f, 1.0f)
+                WheelParameter.LIGHT_DECAY -> ((paramValue - 0.50f) / 0.49f).coerceIn(0.0f, 1.0f)
+                WheelParameter.GRAIN -> (paramValue / 0.20f).coerceIn(0.0f, 1.0f)
+                WheelParameter.VIGNETTE -> (paramValue / 0.50f).coerceIn(0.0f, 1.0f)
+                WheelParameter.HALATION_GLOW -> (paramValue / 0.60f).coerceIn(0.0f, 1.0f)
+                WheelParameter.CHROMATIC_ABERRATION -> (paramValue / 0.10f).coerceIn(0.0f, 1.0f)
+                else -> paramValue.coerceIn(0.0f, 1.0f)
+            }
+        )
+    }
+
+    val animatedSweep by animateFloatAsState(
+        targetValue = activeNorm,
+        animationSpec = tween(durationMillis = if (isDragging) 0 else 250),
+        label = "wheelSweep"
+    )
+
     val activeColor = currentParam.accentColor
 
-    val latestParamValue by androidx.compose.runtime.rememberUpdatedState(paramValue)
-    val latestOnParamChanged by androidx.compose.runtime.rememberUpdatedState(onParamChanged)
-    var activeNorm by remember { mutableFloatStateOf(0.5f) }
+    // Capture latest lambdas to avoid stale closures in gesture pointerInput
+    val latestOnParamChanged by rememberUpdatedState(onParamChanged)
+    val latestParamValue by rememberUpdatedState(paramValue)
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+        modifier = modifier.fillMaxWidth()
     ) {
-        // Quick Parameter Selector Pills
+        // Parameter Selection Horizontal Carousel
         LazyRow(
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth()
+            verticalAlignment = Alignment.CenterVertically
         ) {
             items(WheelParameter.values()) { param ->
-                val isSelected = param == currentParam
+                val isSelected = currentParam == param
                 FilterChip(
                     selected = isSelected,
                     onClick = {
-                        onSelectParam(param)
                         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        onSelectParam(param)
                     },
                     leadingIcon = {
                         Icon(
                             imageVector = param.icon,
                             contentDescription = param.title,
-                            modifier = Modifier.size(12.dp),
-                            tint = if (isSelected) DarkBackground else White.copy(alpha = 0.7f)
+                            tint = if (isSelected) DarkBackground else param.accentColor,
+                            modifier = Modifier.size(14.dp)
                         )
                     },
                     label = {
                         Text(
                             text = param.title,
                             fontSize = 10.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                             fontFamily = FontFamily.Monospace
                         )
                     },
@@ -176,7 +200,6 @@ fun ParameterWheel(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(wheelSize)
-                // Double tap to reset
                 .pointerInput(currentParam) {
                     detectTapGestures(
                         onDoubleTap = {
@@ -185,7 +208,6 @@ fun ParameterWheel(
                         }
                     )
                 }
-                // Continuous delta drag
                 .pointerInput(currentParam) {
                     detectDragGestures(
                         onDragStart = { offset ->
@@ -197,6 +219,10 @@ fun ParameterWheel(
                             activeNorm = when (currentParam) {
                                 WheelParameter.MOTION_THRESHOLD -> ((latestParamValue - 0.01f) / 0.39f).coerceIn(0.0f, 1.0f)
                                 WheelParameter.LIGHT_DECAY -> ((latestParamValue - 0.50f) / 0.49f).coerceIn(0.0f, 1.0f)
+                                WheelParameter.GRAIN -> (latestParamValue / 0.20f).coerceIn(0.0f, 1.0f)
+                                WheelParameter.VIGNETTE -> (latestParamValue / 0.50f).coerceIn(0.0f, 1.0f)
+                                WheelParameter.HALATION_GLOW -> (latestParamValue / 0.60f).coerceIn(0.0f, 1.0f)
+                                WheelParameter.CHROMATIC_ABERRATION -> (latestParamValue / 0.10f).coerceIn(0.0f, 1.0f)
                                 else -> latestParamValue.coerceIn(0.0f, 1.0f)
                             }
                         },
@@ -207,27 +233,26 @@ fun ParameterWheel(
                         val center = Offset(wheelRadiusPx, wheelRadiusPx)
                         val touchX = change.position.x - center.x
                         val touchY = change.position.y - center.y
-
                         val curAngleRad = atan2(touchY.toDouble(), touchX.toDouble())
 
-                        // Calculate shortest normalized angular delta
                         var deltaAngle = curAngleRad - lastAngleRad
                         if (deltaAngle > PI) deltaAngle -= 2 * PI
                         if (deltaAngle < -PI) deltaAngle += 2 * PI
                         lastAngleRad = curAngleRad
 
-                        // Smooth rotational sensitivity (1 full 360 deg sweep = 100% parameter range)
                         val deltaNorm = (deltaAngle / (2 * PI)).toFloat() * 1.15f
                         activeNorm = (activeNorm + deltaNorm).coerceIn(0.0f, 1.0f)
 
-                        // Convert back to parameter-specific range
                         val formattedVal = when (currentParam) {
                             WheelParameter.MOTION_THRESHOLD -> (activeNorm * 0.39f + 0.01f).coerceIn(0.01f, 0.40f)
                             WheelParameter.LIGHT_DECAY -> (activeNorm * 0.49f + 0.50f).coerceIn(0.50f, 0.99f)
+                            WheelParameter.GRAIN -> (activeNorm * 0.20f).coerceIn(0.0f, 0.20f)
+                            WheelParameter.VIGNETTE -> (activeNorm * 0.50f).coerceIn(0.0f, 0.50f)
+                            WheelParameter.HALATION_GLOW -> (activeNorm * 0.60f).coerceIn(0.0f, 0.60f)
+                            WheelParameter.CHROMATIC_ABERRATION -> (activeNorm * 0.10f).coerceIn(0.0f, 0.10f)
                             else -> activeNorm.coerceIn(0.0f, 1.0f)
                         }
 
-                        // Haptic feedback tick on 5% increments
                         val step = (activeNorm * 20f).toInt()
                         if (step != lastHapticStep) {
                             lastHapticStep = step
@@ -244,24 +269,15 @@ fun ParameterWheel(
                 val radius = (size.minDimension / 2f) - 10.dp.toPx()
                 val strokeW = 4.dp.toPx()
 
-                // 1. Background circular track
-                drawCircle(
-                    color = Color(0x22FFFFFF),
-                    radius = radius,
-                    center = Offset(cx, cy),
-                    style = Stroke(width = strokeW)
-                )
+                drawCircle(Color(0x22FFFFFF), radius, Offset(cx, cy), style = Stroke(width = strokeW))
 
-                // 2. Radial tick marks (24 ticks around the circle)
                 for (i in 0 until 24) {
                     val tickAngle = (i * 360f / 24f) * (PI.toFloat() / 180f) - (PI.toFloat() / 2f)
                     val isMajor = i % 6 == 0
                     val innerR = radius - (if (isMajor) 7.dp.toPx() else 4.dp.toPx())
                     val outerR = radius - 1.dp.toPx()
-
                     val p1 = Offset(cx + innerR * cos(tickAngle), cy + innerR * sin(tickAngle))
                     val p2 = Offset(cx + outerR * cos(tickAngle), cy + outerR * sin(tickAngle))
-
                     drawLine(
                         color = if (isMajor) activeColor.copy(alpha = 0.8f) else Color(0x33FFFFFF),
                         start = p1,
@@ -271,22 +287,20 @@ fun ParameterWheel(
                     )
                 }
 
-                // 3. Active arc representation
                 val progress = when (currentParam) {
                     WheelParameter.MOTION_THRESHOLD -> ((paramValue - 0.01f) / 0.39f).coerceIn(0.0f, 1.0f)
                     WheelParameter.LIGHT_DECAY -> ((paramValue - 0.50f) / 0.49f).coerceIn(0.0f, 1.0f)
+                    WheelParameter.GRAIN -> (paramValue / 0.20f).coerceIn(0.0f, 1.0f)
+                    WheelParameter.VIGNETTE -> (paramValue / 0.50f).coerceIn(0.0f, 1.0f)
+                    WheelParameter.HALATION_GLOW -> (paramValue / 0.60f).coerceIn(0.0f, 1.0f)
+                    WheelParameter.CHROMATIC_ABERRATION -> (paramValue / 0.10f).coerceIn(0.0f, 1.0f)
                     else -> paramValue.coerceIn(0.0f, 1.0f)
                 }
 
                 val sweepAngle = progress * 360f
-
                 drawArc(
                     brush = Brush.sweepGradient(
-                        listOf(
-                            activeColor.copy(alpha = 0.25f),
-                            activeColor,
-                            activeColor
-                        ),
+                        listOf(activeColor.copy(alpha = 0.25f), activeColor, activeColor),
                         center = Offset(cx, cy)
                     ),
                     startAngle = -90f,
@@ -297,26 +311,12 @@ fun ParameterWheel(
                     style = Stroke(width = strokeW + 1.dp.toPx(), cap = StrokeCap.Round)
                 )
 
-                // 4. Dial Thumb Knob at the tip of the sweep
                 val thumbAngleRad = (-90f + sweepAngle) * (PI.toFloat() / 180f)
-                val thumbCenter = Offset(
-                    cx + radius * cos(thumbAngleRad),
-                    cy + radius * sin(thumbAngleRad)
-                )
-
-                drawCircle(
-                    color = Color.Black,
-                    radius = 6.dp.toPx(),
-                    center = thumbCenter
-                )
-                drawCircle(
-                    color = activeColor,
-                    radius = 4.5.dp.toPx(),
-                    center = thumbCenter
-                )
+                val thumbCenter = Offset(cx + radius * cos(thumbAngleRad), cy + radius * sin(thumbAngleRad))
+                drawCircle(Color.Black, 6.dp.toPx(), thumbCenter)
+                drawCircle(activeColor, 4.5.dp.toPx(), thumbCenter)
             }
 
-            // Center Display Badge
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
@@ -335,7 +335,8 @@ fun ParameterWheel(
                     WheelParameter.MOTION_THRESHOLD -> "%.2f".format(paramValue)
                     WheelParameter.ECHO_DECAY, WheelParameter.LIGHT_DECAY,
                     WheelParameter.LOOK_INTENSITY, WheelParameter.CHROMATIC_ABERRATION,
-                    WheelParameter.HALATION_GLOW -> "${(paramValue * 100).roundToInt()}%"
+                    WheelParameter.HALATION_GLOW, WheelParameter.GRAIN,
+                    WheelParameter.VIGNETTE -> "${(paramValue * 100).roundToInt()}%"
                 }
 
                 Text(

@@ -17,22 +17,28 @@ object ChromeLut {
             var c = lch.c
             var h = lch.h
 
-            // 1. High-contrast punchy S-curve
-            l = OklabColor.smoothstep(-0.04f, 1.04f, l)
+            // 1. High-contrast punchy S-curve (+12% steeper midtone gradient)
+            l = OklabColor.smoothstep(-0.07f, 1.07f, l)
 
-            // 2. Vibrant Reversal Film Chroma (+18%)
-            c *= 1.18f
+            // 2. Vibrant Reversal Film Chroma (+22%)
+            c *= 1.22f
 
-            // 3. Cool Shadow Tone (Shift shadows towards 230° in OKLch)
-            val shadowZone = 1.0f - OklabColor.smoothstep(0.0f, 0.38f, l)
-            if (shadowZone > 0f) {
-                h += (230f - h) * 0.14f * shadowZone
+            // 3. Deep Shadow Sculpting (Crisp digital contrasty blacks in flat light)
+            if (l < 0.35f) {
+                val shadowCut = (1.0f - OklabColor.smoothstep(0.0f, 0.35f, l)) * 0.024f
+                l -= shadowCut
             }
 
-            // 4. Highlight crispness pop
-            if (l > 0.70f) {
-                val highZone = (l - 0.70f) / 0.30f
-                l += 0.015f * highZone
+            // 4. Cool Shadow Tone (Shift shadows towards 232° in OKLch)
+            val shadowZone = 1.0f - OklabColor.smoothstep(0.0f, 0.40f, l)
+            if (shadowZone > 0f) {
+                h += (232f - h) * 0.16f * shadowZone
+            }
+
+            // 5. Highlight crispness pop
+            if (l > 0.68f) {
+                val highZone = (l - 0.68f) / 0.32f
+                l += 0.020f * highZone
             }
 
             Oklch(

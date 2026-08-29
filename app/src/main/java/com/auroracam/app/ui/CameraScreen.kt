@@ -60,6 +60,8 @@ import android.content.Intent
 import com.auroracam.app.camera.CameraController
 import com.auroracam.app.capture.CaptureSaver
 import com.auroracam.app.capture.DxMetadata
+import com.auroracam.app.capture.LookActivationResult
+import com.auroracam.app.capture.LookUniforms
 import com.auroracam.app.capture.LutManager
 import com.auroracam.app.gl.AuroraRenderer
 import com.auroracam.app.gl.GpuTelemetry
@@ -120,6 +122,8 @@ fun CameraScreen() {
     var isLookEnabled by remember { mutableStateOf(true) }
     var lookIntensity by remember { mutableFloatStateOf(1.0f) }
     var lookHalation by remember { mutableFloatStateOf(0.20f) }
+    var lookGrain by remember { mutableFloatStateOf(0.04f) }
+    var lookVignette by remember { mutableFloatStateOf(0.12f) }
     var activeLutName by remember { mutableStateOf(lutManager.activeLutName) }
     var cachedLutsList by remember { mutableStateOf<List<File>>(emptyList()) }
     var isLegacyJpeg by remember { mutableStateOf(cameraController.isLegacyJpegPath()) }
@@ -132,6 +136,24 @@ fun CameraScreen() {
     var rendererRef by remember { mutableStateOf<AuroraRenderer?>(null) }
     var glSurfaceViewRef by remember { mutableStateOf<GLSurfaceView?>(null) }
 
+    // Helper to atomically apply 3D LUT texture and its companion optical uniforms
+    val applyLookActivation: (com.auroracam.app.capture.LookActivationResult) -> Unit = { res ->
+        activeLutName = res.name
+        lookIntensity = res.uniforms.intensity
+        lookHalation = res.uniforms.halation
+        lookGrain = res.uniforms.grain
+        lookVignette = res.uniforms.vignette
+        chromaticAberration = res.uniforms.chromaticAberration
+        rendererRef?.updateLutCube(res.cube)
+        rendererRef?.updateLookUniforms(
+            intensity = res.uniforms.intensity,
+            halation = res.uniforms.halation,
+            grain = res.uniforms.grain,
+            vignette = res.uniforms.vignette,
+            chromaticAberration = res.uniforms.chromaticAberration
+        )
+    }
+
     // SAF Document Launcher for .cube files
     val lutPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -139,9 +161,8 @@ fun CameraScreen() {
         if (uri != null) {
             coroutineScope.launch {
                 try {
-                    val (name, cube) = lutManager.importAndSelectCubeUri(uri)
-                    activeLutName = name
-                    rendererRef?.updateLutCube(cube)
+                    val res = lutManager.importAndSelectCubeUri(uri)
+                    applyLookActivation(res)
                     cachedLutsList = lutManager.listCachedLuts()
                 } catch (e: Exception) {
                     android.util.Log.e("CameraScreen", "Failed to import .cube file", e)
@@ -152,9 +173,8 @@ fun CameraScreen() {
 
     // Load initial LUT & auto-generate test/debug LUTs & load latest photo on startup
     LaunchedEffect(Unit) {
-        val (name, cube) = lutManager.loadInitialLut()
-        activeLutName = name
-        rendererRef?.updateLutCube(cube)
+        val res = lutManager.loadInitialLut()
+        applyLookActivation(res)
         DebugLutGenerator.generateDebugCubes(context)
         cachedLutsList = lutManager.listCachedLuts()
 
@@ -251,6 +271,8 @@ fun CameraScreen() {
                         renderer.isLookEnabled = isLookEnabled
                         renderer.lookIntensity = lookIntensity
                         renderer.lookHalation = lookHalation
+                        renderer.lookGrain = lookGrain
+                        renderer.lookVignette = lookVignette
                         renderer.temporalEchoDecay = temporalEchoDecay
                         renderer.motionThreshold = motionThreshold
                         renderer.lightTrailDecay = lightTrailDecay
@@ -301,9 +323,8 @@ fun CameraScreen() {
             activeLutName = activeLutName,
             isLookEnabled = isLookEnabled,
             onSelectPreset = { preset ->
-                val (name, cube) = lutManager.selectPreset(preset)
-                activeLutName = name
-                rendererRef?.updateLutCube(cube)
+                val res = lutManager.selectPreset(preset)
+                applyLookActivation(res)
             },
             onLookEnabledChanged = { enabled ->
                 isLookEnabled = enabled
@@ -312,9 +333,8 @@ fun CameraScreen() {
             cachedLuts = cachedLutsList,
             onSelectCachedLut = { file ->
                 coroutineScope.launch {
-                    val (name, cube) = lutManager.selectCachedLut(file)
-                    activeLutName = name
-                    rendererRef?.updateLutCube(cube)
+                    val res = lutManager.selectCachedLut(file)
+                    applyLookActivation(res)
                 }
             },
             cameraMode = cameraMode,
@@ -358,9 +378,8 @@ fun CameraScreen() {
                     activeLutName = activeLutName,
                     isLookEnabled = isLookEnabled,
                     onSelectPreset = { preset ->
-                        val (name, cube) = lutManager.selectPreset(preset)
-                        activeLutName = name
-                        rendererRef?.updateLutCube(cube)
+                        val res = lutManager.selectPreset(preset)
+                        applyLookActivation(res)
                     },
                     onLookEnabledChanged = { enabled ->
                         isLookEnabled = enabled
@@ -704,9 +723,8 @@ fun CameraScreen() {
                     },
                     activeLutName = activeLutName,
                     onSelectPreset = { preset ->
-                        val (name, cube) = lutManager.selectPreset(preset)
-                        activeLutName = name
-                        rendererRef?.updateLutCube(cube)
+                        val res = lutManager.selectPreset(preset)
+                        applyLookActivation(res)
                     },
                     onPickLutFile = { lutPickerLauncher.launch(arrayOf("*/*")) },
                     onGenerateDebugLuts = {
@@ -718,25 +736,64 @@ fun CameraScreen() {
                     availableLuts = cachedLutsList,
                     onSelectCachedLut = { file ->
                         coroutineScope.launch {
-                            val (name, cube) = lutManager.selectCachedLut(file)
-                            activeLutName = name
-                            rendererRef?.updateLutCube(cube)
+                            val res = lutManager.selectCachedLut(file)
+                            applyLookActivation(res)
                         }
                     },
                     onResetToDefaultLut = {
-                        val (name, cube) = lutManager.resetToDefault()
-                        activeLutName = name
-                        rendererRef?.updateLutCube(cube)
+                        val res = lutManager.resetToDefault()
+                        applyLookActivation(res)
                     },
                     lookIntensity = lookIntensity,
                     onLookIntensityChanged = { intensity ->
                         lookIntensity = intensity
                         rendererRef?.lookIntensity = intensity
+                        lutManager.saveUserOverride(
+                            activeLutName,
+                            LookUniforms(intensity, lookHalation, lookGrain, lookVignette, chromaticAberration)
+                        )
                     },
                     lookHalation = lookHalation,
                     onLookHalationChanged = { halo ->
                         lookHalation = halo
                         rendererRef?.lookHalation = halo
+                        lutManager.saveUserOverride(
+                            activeLutName,
+                            LookUniforms(lookIntensity, halo, lookGrain, lookVignette, chromaticAberration)
+                        )
+                    },
+                    lookGrain = lookGrain,
+                    onLookGrainChanged = { grain ->
+                        lookGrain = grain
+                        rendererRef?.lookGrain = grain
+                        lutManager.saveUserOverride(
+                            activeLutName,
+                            LookUniforms(lookIntensity, lookHalation, grain, lookVignette, chromaticAberration)
+                        )
+                    },
+                    lookVignette = lookVignette,
+                    onLookVignetteChanged = { vig ->
+                        lookVignette = vig
+                        rendererRef?.lookVignette = vig
+                        lutManager.saveUserOverride(
+                            activeLutName,
+                            LookUniforms(lookIntensity, lookHalation, lookGrain, vig, chromaticAberration)
+                        )
+                    },
+                    onResetLookUniforms = {
+                        val defUniforms = lutManager.resetUserOverrides(activeLutName)
+                        lookIntensity = defUniforms.intensity
+                        lookHalation = defUniforms.halation
+                        lookGrain = defUniforms.grain
+                        lookVignette = defUniforms.vignette
+                        chromaticAberration = defUniforms.chromaticAberration
+                        rendererRef?.updateLookUniforms(
+                            intensity = defUniforms.intensity,
+                            halation = defUniforms.halation,
+                            grain = defUniforms.grain,
+                            vignette = defUniforms.vignette,
+                            chromaticAberration = defUniforms.chromaticAberration
+                        )
                     },
                     temporalEchoDecay = temporalEchoDecay,
                     onTemporalEchoDecayChanged = { decay ->
@@ -762,6 +819,10 @@ fun CameraScreen() {
                     onChromaticAberrationChanged = { ca ->
                         chromaticAberration = ca
                         rendererRef?.chromaticAberrationIntensity = ca
+                        lutManager.saveUserOverride(
+                            activeLutName,
+                            LookUniforms(lookIntensity, lookHalation, lookGrain, lookVignette, ca)
+                        )
                     },
                     onClearLightTrails = {
                         rendererRef?.clearLightTrails()
@@ -805,6 +866,45 @@ fun CameraScreen() {
                     showGpuOverlay = showGpuOverlay,
                     onShowGpuOverlayToggled = {
                         showGpuOverlay = !showGpuOverlay
+                    },
+                    onCaptureContactSheet7Up = {
+                        isCapturing = true
+                        captureStatus = "Rendering 7-Up Contact Sheet..."
+                        cameraController.takePictureBitmap { sourceBitmap ->
+                            if (sourceBitmap != null && rendererRef != null) {
+                                rendererRef?.renderContactSheet7Up(sourceBitmap) { sheetBitmap ->
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val baseName = CaptureSaver.generateProvenanceBaseName(
+                                            path = "CONTACT_7UP",
+                                            isLegacy = isLegacyJpeg,
+                                            lookName = "ALL_7_LOOKS",
+                                            isLookEnabled = true,
+                                            intensity = 1.0f
+                                        )
+                                        val fileName = "${baseName}.jpg"
+                                        val telemetry = cameraController.lastTelemetry
+                                        val uri = CaptureSaver.saveBitmap(
+                                            context = context,
+                                            bitmap = sheetBitmap,
+                                            fileName = fileName,
+                                            quality = 97,
+                                            telemetry = telemetry
+                                        )
+                                        sheetBitmap.recycle()
+                                        val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
+                                        withContext(Dispatchers.Main) {
+                                            lastCapturedUri = uri
+                                            lastCapturedThumbnail = thumb
+                                            isCapturing = false
+                                            captureStatus = null
+                                        }
+                                    }
+                                }
+                            } else {
+                                isCapturing = false
+                                captureStatus = null
+                            }
+                        }
                     },
                     dxStage = dxStage,
                     dxBlendMode = blendMode,

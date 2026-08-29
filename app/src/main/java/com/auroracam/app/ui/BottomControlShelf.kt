@@ -58,6 +58,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.verticalScroll
 import com.auroracam.app.capture.LutManager
 import com.auroracam.app.ui.theme.BorderHairline
 import com.auroracam.app.ui.theme.NeutralSlate
@@ -103,6 +104,11 @@ fun CreativeDrawer(
     onLookIntensityChanged: (Float) -> Unit,
     lookHalation: Float,
     onLookHalationChanged: (Float) -> Unit,
+    lookGrain: Float = 0.04f,
+    onLookGrainChanged: (Float) -> Unit = {},
+    lookVignette: Float = 0.12f,
+    onLookVignetteChanged: (Float) -> Unit = {},
+    onResetLookUniforms: () -> Unit = {},
     // Effects & Creative Controls
     temporalEchoDecay: Float = 0.75f,
     onTemporalEchoDecayChanged: (Float) -> Unit = {},
@@ -133,6 +139,7 @@ fun CreativeDrawer(
     onPreviewBufferHdToggled: () -> Unit,
     showGpuOverlay: Boolean = false,
     onShowGpuOverlayToggled: () -> Unit = {},
+    onCaptureContactSheet7Up: () -> Unit = {},
     // Double Exposure
     dxStage: DxStage = DxStage.STAGE_1_EMPTY,
     dxBlendMode: BlendMode = BlendMode.SCREEN,
@@ -279,8 +286,10 @@ fun CreativeDrawer(
 
             ShelfTab.LOOKS -> {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     // Presets Row
                     Row(
@@ -426,7 +435,49 @@ fun CreativeDrawer(
                         }
                     }
 
-                    // Look Intensity & Halation Sliders
+                    // Look Profile Header & Reset Action
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp, bottom = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "OPTICAL PROFILE: ${if (isLookEnabled) activeLutName.uppercase() else "RAW"}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = NeutralSlate
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable {
+                                    view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    onResetLookUniforms()
+                                }
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.RestartAlt,
+                                contentDescription = "Reset Profile",
+                                tint = WarmAmber,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "RESET",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = WarmAmber
+                            )
+                        }
+                    }
+
+                    // Look Sliders: Mix, Glow, Grain, Vignette
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -434,9 +485,9 @@ fun CreativeDrawer(
                         Text(
                             text = "Mix ${(lookIntensity * 100).toInt()}%",
                             color = NeutralSlate,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.width(68.dp)
+                            modifier = Modifier.width(72.dp)
                         )
                         Slider(
                             value = lookIntensity,
@@ -444,7 +495,7 @@ fun CreativeDrawer(
                             valueRange = 0.0f..1.0f,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(20.dp),
+                                .height(18.dp),
                             colors = SliderDefaults.colors(
                                 thumbColor = WarmAmber,
                                 activeTrackColor = WarmAmber,
@@ -460,9 +511,9 @@ fun CreativeDrawer(
                         Text(
                             text = "Glow ${(lookHalation * 100).toInt()}%",
                             color = NeutralSlate,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.width(68.dp)
+                            modifier = Modifier.width(72.dp)
                         )
                         Slider(
                             value = lookHalation,
@@ -470,7 +521,59 @@ fun CreativeDrawer(
                             valueRange = 0.0f..0.60f,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(20.dp),
+                                .height(18.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = WarmAmber,
+                                activeTrackColor = WarmAmber,
+                                inactiveTrackColor = SurfaceElevated
+                            )
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Grain ${(lookGrain * 100).toInt()}%",
+                            color = NeutralSlate,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.width(72.dp)
+                        )
+                        Slider(
+                            value = lookGrain,
+                            onValueChange = onLookGrainChanged,
+                            valueRange = 0.0f..0.20f,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(18.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = WarmAmber,
+                                activeTrackColor = WarmAmber,
+                                inactiveTrackColor = SurfaceElevated
+                            )
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Vignette ${(lookVignette * 100).toInt()}%",
+                            color = NeutralSlate,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.width(72.dp)
+                        )
+                        Slider(
+                            value = lookVignette,
+                            onValueChange = onLookVignetteChanged,
+                            valueRange = 0.0f..0.50f,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(18.dp),
                             colors = SliderDefaults.colors(
                                 thumbColor = WarmAmber,
                                 activeTrackColor = WarmAmber,
@@ -493,6 +596,8 @@ fun CreativeDrawer(
                         WheelParameter.CHROMATIC_ABERRATION -> chromaticAberration
                         WheelParameter.LOOK_INTENSITY -> lookIntensity
                         WheelParameter.HALATION_GLOW -> lookHalation
+                        WheelParameter.GRAIN -> lookGrain
+                        WheelParameter.VIGNETTE -> lookVignette
                     }
 
                     ParameterWheel(
@@ -506,6 +611,8 @@ fun CreativeDrawer(
                                 WheelParameter.CHROMATIC_ABERRATION -> onChromaticAberrationChanged(value)
                                 WheelParameter.LOOK_INTENSITY -> onLookIntensityChanged(value)
                                 WheelParameter.HALATION_GLOW -> onLookHalationChanged(value)
+                                WheelParameter.GRAIN -> onLookGrainChanged(value)
+                                WheelParameter.VIGNETTE -> onLookVignetteChanged(value)
                             }
                         },
                         onSelectParam = onSelectWheelParam
@@ -716,6 +823,39 @@ fun CreativeDrawer(
                                 enabled = true,
                                 selected = isLegacyJpeg,
                                 borderColor = BorderHairline,
+                                selectedBorderColor = WarmAmber
+                            ),
+                            modifier = Modifier.height(26.dp)
+                        )
+                    }
+
+                    // Developer & Color Science Tools Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("DEV TOOLS", color = NeutralSlate, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(64.dp))
+                        FilterChip(
+                            selected = false,
+                            onClick = onCaptureContactSheet7Up,
+                            label = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Layers, contentDescription = null, tint = WarmAmber, modifier = Modifier.size(12.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("7-UP CONTACT SHEET", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = WarmAmber)
+                                }
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = SurfaceElevated,
+                                labelColor = WarmAmber
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = false,
+                                borderColor = WarmAmber.copy(alpha = 0.5f),
                                 selectedBorderColor = WarmAmber
                             ),
                             modifier = Modifier.height(26.dp)

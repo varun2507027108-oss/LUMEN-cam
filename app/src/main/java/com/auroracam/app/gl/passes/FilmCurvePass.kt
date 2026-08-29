@@ -38,6 +38,7 @@ uniform float uIntensity;
 uniform float uGrain;
 uniform float uVignette;
 uniform float uHalation;
+uniform float uHalationThreshold;
 uniform float uTime;
 uniform vec2 uGrainScale;
 uniform vec2 uTexelSize;
@@ -71,17 +72,18 @@ float hash(vec2 p) {
 vec3 computeHalation(vec2 uv) {
     if (uHalation <= 0.001) return vec3(0.0);
 
-    // Multi-tap directional sampling around highlights (luma > 0.75)
+    // Multi-tap directional sampling around highlights gated by uHalationThreshold
     vec2 stepSize = uTexelSize * 4.5;
     vec3 bloomAccum = vec3(0.0);
     float weightTotal = 0.0;
+    float upperKnee = min(uHalationThreshold + 0.30, 1.0);
 
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
             vec2 offset = uv + vec2(float(x), float(y)) * stepSize;
             vec3 s = texture(uSrc, offset).rgb;
             float sl = dot(s, W);
-            float brightFactor = smoothstep(0.72, 0.98, sl);
+            float brightFactor = smoothstep(uHalationThreshold, upperKnee, sl);
             float weight = (x == 0 && y == 0) ? 0.30 : 0.0875;
             bloomAccum += s * brightFactor * weight;
             weightTotal += weight;
@@ -136,6 +138,7 @@ void main() {
     private var uGrainLoc = -1
     private var uVignetteLoc = -1
     private var uHalationLoc = -1
+    private var uHalationThresholdLoc = -1
     private var uTimeLoc = -1
     private var uGrainScaleLoc = -1
     private var uTexelSizeLoc = -1
@@ -165,6 +168,7 @@ void main() {
         uGrainLoc = GLES30.glGetUniformLocation(programId, "uGrain")
         uVignetteLoc = GLES30.glGetUniformLocation(programId, "uVignette")
         uHalationLoc = GLES30.glGetUniformLocation(programId, "uHalation")
+        uHalationThresholdLoc = GLES30.glGetUniformLocation(programId, "uHalationThreshold")
         uTimeLoc = GLES30.glGetUniformLocation(programId, "uTime")
         uGrainScaleLoc = GLES30.glGetUniformLocation(programId, "uGrainScale")
         uTexelSizeLoc = GLES30.glGetUniformLocation(programId, "uTexelSize")
@@ -182,6 +186,7 @@ void main() {
         grain: Float = 0.04f,
         vignette: Float = 0.12f,
         halation: Float = 0.20f,
+        halationThreshold: Float = 0.75f,
         timeSeconds: Float = 0f,
         aspectRatio: Float = 1.0f,
         width: Int = 1080,
@@ -212,6 +217,7 @@ void main() {
         GLES30.glUniform1f(uGrainLoc, grain.coerceAtLeast(0f))
         GLES30.glUniform1f(uVignetteLoc, vignette.coerceIn(0f, 1f))
         GLES30.glUniform1f(uHalationLoc, halation.coerceIn(0f, 1f))
+        GLES30.glUniform1f(uHalationThresholdLoc, halationThreshold.coerceIn(0.10f, 1.0f))
         GLES30.glUniform1f(uTimeLoc, timeSeconds % 3600f)
         GLES30.glUniform2f(uGrainScaleLoc, 900.0f * aspectRatio, 900.0f)
         GLES30.glUniform2f(uTexelSizeLoc, 1.0f / maxOf(1, width).toFloat(), 1.0f / maxOf(1, height).toFloat())
