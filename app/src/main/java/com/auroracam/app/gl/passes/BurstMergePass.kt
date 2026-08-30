@@ -67,11 +67,12 @@ class BurstMergePass {
                     continue;
                 }
                 
-                // Lookup mask weight (Reference frame always forced to 1.0)
-                float w = texture(uMaskArray, vec3(vUv, float(i))).r;
-                if (i == uRefIndex) {
-                    w = 1.0;
-                }
+                // Lookup continuous mask weight
+                float rawMask = texture(uMaskArray, vec3(vUv, float(i))).r;
+                
+                // Non-linear confidence weighting: suppress ghost trails in motion zones (gamma = 2.0)
+                // Reference frame is strictly pinned to 1.0 for guaranteed fallback
+                float w = (i == uRefIndex) ? 1.0 : (rawMask * rawMask);
 
                 float y = texture(uYArray, vec3(shiftedUv, float(i))).r;
                 float u = texture(uUArray, vec3(shiftedUv, float(i))).r - 0.5;
@@ -183,10 +184,10 @@ class BurstMergePass {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D_ARRAY, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexImage3D(GLES30.GL_TEXTURE_2D_ARRAY, 0, GLES30.GL_R8, uvWidth, uvHeight, n, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, null)
 
-        // Allocate Mask Array (maskWidth x maskHeight x N)
+        // Allocate Mask Array (maskWidth x maskHeight x N) with GL_LINEAR for seamless spatial blending
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D_ARRAY, maskTexArray)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D_ARRAY, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D_ARRAY, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D_ARRAY, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D_ARRAY, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D_ARRAY, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D_ARRAY, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexImage3D(GLES30.GL_TEXTURE_2D_ARRAY, 0, GLES30.GL_R8, maskWidth, maskHeight, n, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, null)
@@ -261,7 +262,7 @@ class BurstMergePass {
         GLES30.glDeleteTextures(4, texIds, 0)
 
         val mergeTimeMs = SystemClock.elapsedRealtime() - startMs
-        Log.i(TAG, "GPU Burst Merge complete: merged $n frames (${width}x${height}) in ${mergeTimeMs}ms (refIdx=${alignedResult.refIndex})")
+        Log.i(TAG, "BURST MERGE: fused $n frames (${width}x${height}) in ${mergeTimeMs}ms (refIdx=${alignedResult.refIndex})")
     }
 
     fun release() {
