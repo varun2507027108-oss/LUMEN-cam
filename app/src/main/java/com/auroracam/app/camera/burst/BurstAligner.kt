@@ -90,11 +90,13 @@ object BurstAligner {
         val offsetsLogged = mutableListOf<String>()
         val accLogged = mutableListOf<String>()
         var droppedCount = 0
+        var alignedRefIndex = -1
 
         for (i in 0 until n) {
             if (i == bestRefIdx) {
                 val refMask = createFullAcceptMask()
                 alignedList.add(AlignedFrame(frames[i], 0f, 0f, 1.0f, refMask))
+                alignedRefIndex = alignedList.lastIndex
                 continue
             }
 
@@ -161,10 +163,10 @@ object BurstAligner {
         }
 
         val elapsedMs = SystemClock.elapsedRealtime() - startMs
-        Log.i(TAG, "BURST ALIGN: refIndex=$bestRefIdx frames=$n kept=${alignedList.size} dropped=$droppedCount ms=${elapsedMs}ms off=[${offsetsLogged.joinToString()}] conf=[${accLogged.joinToString()}]")
+        Log.i(TAG, "BURST ALIGN: origRefIndex=$bestRefIdx alignedRefIndex=$alignedRefIndex frames=$n kept=${alignedList.size} dropped=$droppedCount ms=${elapsedMs}ms off=[${offsetsLogged.joinToString()}] conf=[${accLogged.joinToString()}]")
 
         return AlignmentResult(
-            refIndex = bestRefIdx,
+            refIndex = if (alignedRefIndex != -1) alignedRefIndex else 0,
             alignedFrames = alignedList,
             droppedCount = droppedCount,
             elapsedMs = elapsedMs
