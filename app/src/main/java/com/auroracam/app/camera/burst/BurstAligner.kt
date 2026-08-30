@@ -36,7 +36,8 @@ object BurstAligner {
         val dxFull: Float,
         val dyFull: Float,
         val acceptedFraction: Float,
-        val maskBuffer: ByteBuffer // R8 mask texture buffer (TILES_X x TILES_Y)
+        val maskBuffer: ByteBuffer, // R8 mask texture buffer (TILES_X x TILES_Y)
+        val lowConfidenceTiles: Int = 0
     )
 
     data class AlignmentResult(
@@ -143,7 +144,7 @@ object BurstAligner {
             val dyFull = subDy480 * scaleY
 
             // 3.4: Compute 16px tile robustness masks
-            val (maskBuffer, acceptFrac) = computeTileRobustnessMask(
+            val (maskBuffer, acceptFrac, lowTiles) = computeTileRobustnessMask(
                 ref = refLuma480,
                 target = targetLuma480,
                 dx = subDx480.roundToInt(),
@@ -151,14 +152,14 @@ object BurstAligner {
             )
 
             offsetsLogged.add("(%.2f,%.2f)".format(dxFull, dyFull))
-            accLogged.add("${(acceptFrac * 100).toInt()}%")
+            accLogged.add("${(acceptFrac * 100).toInt()}% (low=$lowTiles)")
 
             // 3.5: Drop frame only if usable tile confidence < 5% (severe global misregistration/blur)
             if (acceptFrac < 0.05f) {
                 Log.w(TAG, "Dropping frame $i: mean confidence ${(acceptFrac * 100).toInt()}% is below 5% threshold (global motion/shake)")
                 droppedCount++
             } else {
-                alignedList.add(AlignedFrame(frames[i], dxFull, dyFull, acceptFrac, maskBuffer))
+                alignedList.add(AlignedFrame(frames[i], dxFull, dyFull, acceptFrac, maskBuffer, lowTiles))
             }
         }
 
@@ -339,7 +340,7 @@ object BurstAligner {
         target: ByteArray,
         dx: Int,
         dy: Int
-    ): Pair<ByteBuffer, Float> {
+    ): Triple<ByteBuffer, Float, Int> {
         val tileSads = FloatArray(TOTAL_TILES)
         var tileIdx = 0
 
@@ -380,6 +381,7 @@ object BurstAligner {
 
         val maskBuffer = ByteBuffer.allocateDirect(TILES_X * TILES_Y).order(ByteOrder.nativeOrder())
         var totalConfidence = 0.0f
+        var lowConfidenceCount = 0
 
         for (i in 0 until TOTAL_TILES) {
             val sad = tileSads[i]
@@ -392,6 +394,9 @@ object BurstAligner {
                     1.0f - (t * t * (3.0f - 2.0f * t))
                 }
             }
+            if (confidence < 0.5f) {
+                lowConfidenceCount++
+            }
             totalConfidence += confidence
             val byteVal = (confidence * 255.0f).roundToInt().coerceIn(0, 255).toByte()
             maskBuffer.put(byteVal)
@@ -399,7 +404,7 @@ object BurstAligner {
         maskBuffer.rewind()
 
         val meanConfidence = totalConfidence / TOTAL_TILES.toFloat()
-        return Pair(maskBuffer, meanConfidence)
+        return Triple(maskBuffer, meanConfidence, lowConfidenceCount)
     }
 
     fun createFullAcceptMask(): ByteBuffer {

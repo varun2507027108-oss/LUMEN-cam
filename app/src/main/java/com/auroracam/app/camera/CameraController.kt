@@ -58,6 +58,8 @@ class CameraController(
             Log.d(TAG, "rebindCamera: surfaceTexture is null, waiting for surface ready")
             return
         }
+        captureEngine.isRawCaptureEnabled = isRawCaptureEnabled()
+        captureEngine.isSimpleHdrEnabled = isSimpleHdrEnabled()
         captureEngine.open(
             st = st,
             isPreviewHd = isPreviewBufferHd(),
@@ -95,6 +97,18 @@ class CameraController(
     fun setLookPrecision16f(enabled: Boolean) {
         val prefs = context.getSharedPreferences("aurora_cam_prefs", Context.MODE_PRIVATE)
         prefs.edit().putBoolean("look_precision_16f", enabled).apply()
+    }
+
+    fun isSimpleHdrEnabled(): Boolean {
+        val prefs = context.getSharedPreferences("aurora_cam_prefs", Context.MODE_PRIVATE)
+        return prefs.getBoolean("simple_hdr_enabled", false)
+    }
+
+    fun setSimpleHdrEnabled(enabled: Boolean) {
+        val prefs = context.getSharedPreferences("aurora_cam_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("simple_hdr_enabled", enabled).apply()
+        captureEngine.applySimpleHdrMode(enabled)
+        Log.i(TAG, "Simple HDR preference updated: simple_hdr_enabled=$enabled")
     }
 
     fun isBurstStack(): Boolean {

@@ -46,6 +46,9 @@ class BurstMergePass {
         in vec2 vUv;
         out vec4 fragColor;
 
+        const float TEMPORAL_LOW = 0.035;
+        const float TEMPORAL_HIGH = 0.12;
+
         vec3 yuvToRgb(float y, float u, float v) {
             // ITU-R BT.601 color matrix (matches single-encode YUV path)
             float r = y + 1.402 * v;
@@ -59,6 +62,10 @@ class BurstMergePass {
             float accumWeight = 0.0;
             vec3 refRgb = vec3(0.0);
 
+            // Reference luminance at the output coordinate.
+            // It is the temporal anchor for per-pixel deghosting.
+            float refY = texture(uYArray, vec3(vUv, float(uRefIndex))).r;
+
             for (int i = 0; i < uFrameCount; i++) {
                 vec2 shiftedUv = vUv + uOffsets[i];
                 
@@ -66,21 +73,28 @@ class BurstMergePass {
                 if (shiftedUv.x < 0.0 || shiftedUv.x > 1.0 || shiftedUv.y < 0.0 || shiftedUv.y > 1.0) {
                     continue;
                 }
-                
-                // Lookup continuous mask weight
-                float rawMask = texture(uMaskArray, vec3(vUv, float(i))).r;
-                
-                // Non-linear confidence weighting: suppress ghost trails in motion zones (gamma = 2.0)
-                // Reference frame is strictly pinned to 1.0 for guaranteed fallback
-                float w = (i == uRefIndex) ? 1.0 : (rawMask * rawMask);
 
                 float y = texture(uYArray, vec3(shiftedUv, float(i))).r;
                 float u = texture(uUArray, vec3(shiftedUv, float(i))).r - 0.5;
                 float v = texture(uVArray, vec3(shiftedUv, float(i))).r - 0.5;
-
                 vec3 rgb = yuvToRgb(y, u, v);
+
+                float w;
                 if (i == uRefIndex) {
+                    // Reference frame is strictly pinned to 1.0 for guaranteed fallback
+                    w = 1.0;
                     refRgb = rgb;
+                } else {
+                    // Existing tile-level continuous confidence (gamma = 2.0)
+                    float rawMask = texture(uMaskArray, vec3(vUv, float(i))).r;
+                    float tileConfidence = rawMask * rawMask;
+
+                    // Per-pixel temporal disagreement against reference anchor
+                    float temporalResidual = abs(y - refY);
+                    float temporalConfidence = 1.0 - smoothstep(TEMPORAL_LOW, TEMPORAL_HIGH, temporalResidual);
+
+                    // Both tests must agree before non-reference frame contributes
+                    w = tileConfidence * temporalConfidence;
                 }
 
                 accumRgb += rgb * w;
