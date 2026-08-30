@@ -499,43 +499,69 @@ fun CameraScreen() {
                                     return@takeBurst
                                 }
                                 coroutineScope.launch(Dispatchers.Default) {
-                                    val aligned = com.auroracam.app.camera.burst.BurstAligner.alignBurst(frames)
-                                    val frameW = frames[0].width
-                                    val frameH = frames[0].height
-                                    withContext(Dispatchers.Main) {
-                                        captureStatus = "Merging & Grading..."
-                                        rendererRef?.renderBurstMergeAndGrade(aligned, frameW, frameH) { mergedBitmap ->
-                                            coroutineScope.launch(Dispatchers.IO) {
-                                                val cropped = currentFormat.cropBitmap(mergedBitmap)
-                                                val fileName = CaptureSaver.generateCaptureFileName(
-                                                    path = "STD",
-                                                    isLegacy = isLegacyJpeg,
-                                                    lookName = activeLutName,
-                                                    isLookEnabled = isLookEnabled,
-                                                    intensity = lookIntensity,
-                                                    encOverride = "STK"
-                                                )
-                                                val uri = CaptureSaver.saveBitmap(
-                                                    context = context,
-                                                    bitmap = cropped,
-                                                    fileName = fileName,
-                                                    quality = 97,
-                                                    telemetry = cameraController.lastTelemetry
-                                                )
-                                                if (cropped != mergedBitmap) {
-                                                    cropped.recycle()
-                                                }
-                                                mergedBitmap.recycle()
-                                                // Release YUV buffers back to pool now that GPU merge has consumed them
-                                                frames.forEach { it.release() }
-                                                val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
-                                                withContext(Dispatchers.Main) {
-                                                    lastCapturedUri = uri
-                                                    lastCapturedThumbnail = thumb
-                                                    isCapturing = false
-                                                    captureStatus = null
+                                    try {
+                                        val aligned = com.auroracam.app.camera.burst.BurstAligner.alignBurst(frames)
+                                        val frameW = frames[0].width
+                                        val frameH = frames[0].height
+
+                                        val renderer = rendererRef
+                                        if (renderer == null) {
+                                            // No renderer available — release now, we can't proceed.
+                                            frames.forEach { it.release() }
+                                            withContext(Dispatchers.Main) {
+                                                android.util.Log.e("CameraScreen", "Burst merge skipped: renderer unavailable")
+                                                isCapturing = false
+                                                captureStatus = null
+                                            }
+                                            return@launch
+                                        }
+
+                                        withContext(Dispatchers.Main) {
+                                            captureStatus = "Merging & Grading..."
+                                            renderer.renderBurstMergeAndGrade(aligned, frameW, frameH) { mergedBitmap ->
+                                                coroutineScope.launch(Dispatchers.IO) {
+                                                    try {
+                                                        val cropped = currentFormat.cropBitmap(mergedBitmap)
+                                                        val fileName = CaptureSaver.generateCaptureFileName(
+                                                            path = "STD",
+                                                            isLegacy = isLegacyJpeg,
+                                                            lookName = activeLutName,
+                                                            isLookEnabled = isLookEnabled,
+                                                            intensity = lookIntensity,
+                                                            encOverride = "STK"
+                                                        )
+                                                        val uri = CaptureSaver.saveBitmap(
+                                                            context = context,
+                                                            bitmap = cropped,
+                                                            fileName = fileName,
+                                                            quality = 97,
+                                                            telemetry = cameraController.lastTelemetry
+                                                        )
+                                                        if (cropped != mergedBitmap) {
+                                                            cropped.recycle()
+                                                        }
+                                                        mergedBitmap.recycle()
+                                                        val thumb = uri?.let { CaptureSaver.loadThumbnail(context, it) }
+                                                        withContext(Dispatchers.Main) {
+                                                            lastCapturedUri = uri
+                                                            lastCapturedThumbnail = thumb
+                                                            isCapturing = false
+                                                            captureStatus = null
+                                                        }
+                                                    } finally {
+                                                        // Always release, whether save succeeded or threw.
+                                                        frames.forEach { it.release() }
+                                                    }
                                                 }
                                             }
+                                        }
+                                    } catch (e: Exception) {
+                                        // Alignment or any step before the render callback threw — release now.
+                                        frames.forEach { it.release() }
+                                        android.util.Log.e("CameraScreen", "Burst processing failed", e)
+                                        withContext(Dispatchers.Main) {
+                                            isCapturing = false
+                                            captureStatus = null
                                         }
                                     }
                                 }

@@ -202,6 +202,8 @@ class Camera2CaptureEngine(
                 captureYuvReader = null
                 captureJpegReader?.close()
                 captureJpegReader = null
+                captureRawReader?.close()
+                captureRawReader = null
                 previewSurface?.release()
                 previewSurface = null
             } catch (e: Exception) {
@@ -1034,6 +1036,7 @@ class Camera2CaptureEngine(
             cameraDevice?.close()
             captureYuvReader?.close()
             captureJpegReader?.close()
+            captureRawReader?.close()
             previewSurface?.release()
             cameraSessionExecutor.shutdown()
         } catch (e: Exception) {
