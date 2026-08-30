@@ -42,6 +42,7 @@ class BurstMergePass {
         uniform int uFrameCount;
         uniform int uRefIndex;
         uniform int uChromaSoften;
+        uniform int uDebugMode; // 0: Normal, 1: Reference, 2: Aligned Frame 0, 3: Tile Mask, 4: Temporal Heatmap
 
         in vec2 vUv;
         out vec4 fragColor;
@@ -58,13 +59,31 @@ class BurstMergePass {
         }
 
         void main() {
+            vec2 texelSize = 1.0 / vec2(textureSize(uYArray, 0).xy);
+
+            // Reference frame cross-neighborhood sampling for edge-safe temporal gating
+            float refYCenter = texture(uYArray, vec3(vUv, float(uRefIndex))).r;
+            float refYLeft   = texture(uYArray, vec3(vUv + vec2(-texelSize.x, 0.0), float(uRefIndex))).r;
+            float refYRight  = texture(uYArray, vec3(vUv + vec2( texelSize.x, 0.0), float(uRefIndex))).r;
+            float refYUp     = texture(uYArray, vec3(vUv + vec2(0.0, -texelSize.y), float(uRefIndex))).r;
+            float refYDown   = texture(uYArray, vec3(vUv + vec2(0.0,  texelSize.y), float(uRefIndex))).r;
+
+            float refU = texture(uUArray, vec3(vUv, float(uRefIndex))).r - 0.5;
+            float refV = texture(uVArray, vec3(vUv, float(uRefIndex))).r - 0.5;
+            vec3 refRgb = yuvToRgb(refYCenter, refU, refV);
+
+            if (uDebugMode == 1) {
+                // Diagnostic: Reference frame only
+                fragColor = vec4(refRgb, 1.0);
+                return;
+            }
+
             vec3 accumRgb = vec3(0.0);
             float accumWeight = 0.0;
-            vec3 refRgb = vec3(0.0);
-
-            // Reference luminance at the output coordinate.
-            // It is the temporal anchor for per-pixel deghosting.
-            float refY = texture(uYArray, vec3(vUv, float(uRefIndex))).r;
+            float maxTemporalResidual = 0.0;
+            float avgTileConfidence = 0.0;
+            vec3 firstNonRefRgb = vec3(0.0);
+            bool hasFirstNonRef = false;
 
             for (int i = 0; i < uFrameCount; i++) {
                 vec2 shiftedUv = vUv + uOffsets[i];
@@ -74,23 +93,41 @@ class BurstMergePass {
                     continue;
                 }
 
-                float y = texture(uYArray, vec3(shiftedUv, float(i))).r;
+                float yCenter = texture(uYArray, vec3(shiftedUv, float(i))).r;
                 float u = texture(uUArray, vec3(shiftedUv, float(i))).r - 0.5;
                 float v = texture(uVArray, vec3(shiftedUv, float(i))).r - 0.5;
-                vec3 rgb = yuvToRgb(y, u, v);
+                vec3 rgb = yuvToRgb(yCenter, u, v);
+
+                if (i != uRefIndex && !hasFirstNonRef) {
+                    firstNonRefRgb = rgb;
+                    hasFirstNonRef = true;
+                }
 
                 float w;
                 if (i == uRefIndex) {
                     // Reference frame is strictly pinned to 1.0 for guaranteed fallback
                     w = 1.0;
-                    refRgb = rgb;
                 } else {
                     // Existing tile-level continuous confidence (gamma = 2.0)
                     float rawMask = texture(uMaskArray, vec3(vUv, float(i))).r;
                     float tileConfidence = rawMask * rawMask;
+                    avgTileConfidence += tileConfidence;
 
-                    // Per-pixel temporal disagreement against reference anchor
-                    float temporalResidual = abs(y - refY);
+                    // 5-point cross neighborhood luminance residual check
+                    float yLeft   = texture(uYArray, vec3(shiftedUv + vec2(-texelSize.x, 0.0), float(i))).r;
+                    float yRight  = texture(uYArray, vec3(shiftedUv + vec2( texelSize.x, 0.0), float(i))).r;
+                    float yUp     = texture(uYArray, vec3(shiftedUv + vec2(0.0, -texelSize.y), float(i))).r;
+                    float yDown   = texture(uYArray, vec3(shiftedUv + vec2(0.0,  texelSize.y), float(i))).r;
+
+                    float diffCenter = abs(yCenter - refYCenter);
+                    float diffLeft   = abs(yLeft - refYLeft);
+                    float diffRight  = abs(yRight - refYRight);
+                    float diffUp     = abs(yUp - refYUp);
+                    float diffDown   = abs(yDown - refYDown);
+
+                    float temporalResidual = max(diffCenter, max(max(diffLeft, diffRight), max(diffUp, diffDown)));
+                    maxTemporalResidual = max(maxTemporalResidual, temporalResidual);
+
                     float temporalConfidence = 1.0 - smoothstep(TEMPORAL_LOW, TEMPORAL_HIGH, temporalResidual);
 
                     // Both tests must agree before non-reference frame contributes
@@ -99,6 +136,28 @@ class BurstMergePass {
 
                 accumRgb += rgb * w;
                 accumWeight += w;
+            }
+
+            if (uDebugMode == 2) {
+                // Diagnostic: Shifted non-reference frame
+                fragColor = vec4(hasFirstNonRef ? firstNonRefRgb : refRgb, 1.0);
+                return;
+            }
+
+            if (uDebugMode == 3) {
+                // Diagnostic: Tile confidence visualization
+                float nonRefCount = max(float(uFrameCount - 1), 1.0);
+                float normConfidence = clamp(avgTileConfidence / nonRefCount, 0.0, 1.0);
+                fragColor = vec4(vec3(normConfidence), 1.0);
+                return;
+            }
+
+            if (uDebugMode == 4) {
+                // Diagnostic: Temporal residual heatmap (Green = static, Red = motion)
+                float resNormalized = clamp(maxTemporalResidual / TEMPORAL_HIGH, 0.0, 1.0);
+                vec3 heatmap = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), resNormalized);
+                fragColor = vec4(heatmap, 1.0);
+                return;
             }
 
             vec3 finalRgb = (accumWeight > 0.0) ? (accumRgb / accumWeight) : refRgb;
@@ -115,6 +174,7 @@ class BurstMergePass {
     private var uFrameCountLoc = -1
     private var uRefIndexLoc = -1
     private var uChromaSoftenLoc = -1
+    private var uDebugModeLoc = -1
 
     private val vertexBuffer: FloatBuffer = ByteBuffer.allocateDirect(8 * 4)
         .order(ByteOrder.nativeOrder())
@@ -142,6 +202,7 @@ class BurstMergePass {
         uFrameCountLoc = GLES30.glGetUniformLocation(program, "uFrameCount")
         uRefIndexLoc = GLES30.glGetUniformLocation(program, "uRefIndex")
         uChromaSoftenLoc = GLES30.glGetUniformLocation(program, "uChromaSoften")
+        uDebugModeLoc = GLES30.glGetUniformLocation(program, "uDebugMode")
         Log.i(TAG, "BurstMergePass GLES 3.0 shader initialized successfully (program=$program)")
     }
 
@@ -152,7 +213,8 @@ class BurstMergePass {
         alignedResult: BurstAligner.AlignmentResult,
         width: Int,
         height: Int,
-        chromaSoften: Boolean = true
+        chromaSoften: Boolean = true,
+        debugMode: Int = 0
     ) {
         val startMs = SystemClock.elapsedRealtime()
         val frames = alignedResult.alignedFrames
@@ -260,6 +322,7 @@ class BurstMergePass {
         GLES30.glUniform1i(uFrameCountLoc, n)
         GLES30.glUniform1i(uRefIndexLoc, alignedResult.refIndex)
         GLES30.glUniform1i(uChromaSoftenLoc, if (chromaSoften) 1 else 0)
+        GLES30.glUniform1i(uDebugModeLoc, debugMode)
 
         GLES30.glEnableVertexAttribArray(0)
         GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, vertexBuffer)
