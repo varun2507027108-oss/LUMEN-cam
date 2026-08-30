@@ -10,13 +10,26 @@ import kotlin.math.roundToInt
 object BurstAligner {
     private const val TAG = "BurstAligner"
 
-    const val WORKING_W = 480
-    const val WORKING_H = 360
+    // Working resolution for the alignment pyramid. Raised from 480x360 to
+    // 960x720 to shrink the scale-up multiplier applied when mapping the
+    // measured offset back to full capture resolution — at 480w that
+    // multiplier was ~6-7x for a ~3200px-wide capture, amplifying small
+    // sub-pixel alignment residuals into multi-pixel ghosting after merge.
+    // Doubling working resolution roughly halves that multiplier.
+    const val WORKING_W = 960
+    const val WORKING_H = 720
+
+    // Pyramid level dimensions, derived so they stay correct if
+    // WORKING_W/WORKING_H change again.
+    const val LEVEL1_W = WORKING_W / 2   // 480
+    const val LEVEL1_H = WORKING_H / 2   // 360
+    const val LEVEL0_W = WORKING_W / 4   // 240
+    const val LEVEL0_H = WORKING_H / 4   // 180
 
     const val TILE_SIZE = 16
-    const val TILES_X = WORKING_W / TILE_SIZE // 30
-    const val TILES_Y = WORKING_H / TILE_SIZE // 22 (480x352 used for tiles, 360 total)
-    const val TOTAL_TILES = TILES_X * TILES_Y // 660
+    const val TILES_X = WORKING_W / TILE_SIZE // 60
+    const val TILES_Y = WORKING_H / TILE_SIZE // 45
+    const val TOTAL_TILES = TILES_X * TILES_Y // 2700
 
     data class AlignedFrame(
         val rawFrame: RawYuvFrame,
@@ -52,9 +65,9 @@ object BurstAligner {
         val scaleX = origW.toFloat() / WORKING_W.toFloat()
         val scaleY = origH.toFloat() / WORKING_H.toFloat()
 
-        // 3.1: Downscale each Y plane to 480x360 working luma
+        // 3.1: Downscale each Y plane to working luma resolution
         val downscaled = Array(n) { i ->
-            downscaleYTo480x360(frames[i].yBuffer, origW, origH)
+            downscaleYToWorkingResolution(frames[i].yBuffer, origW, origH)
         }
 
         // 3.2: Reference selection via highest gradient energy (Sum |gradX| + |gradY|)
@@ -71,7 +84,7 @@ object BurstAligner {
 
         val refLuma480 = downscaled[bestRefIdx]
         val refLuma240 = downscaleHalf(refLuma480, WORKING_W, WORKING_H)
-        val refLuma120 = downscaleHalf(refLuma240, 240, 180)
+        val refLuma120 = downscaleHalf(refLuma240, LEVEL1_W, LEVEL1_H)
 
         val alignedList = mutableListOf<AlignedFrame>()
         val offsetsLogged = mutableListOf<String>()
@@ -87,32 +100,32 @@ object BurstAligner {
 
             val targetLuma480 = downscaled[i]
             val targetLuma240 = downscaleHalf(targetLuma480, WORKING_W, WORKING_H)
-            val targetLuma120 = downscaleHalf(targetLuma240, 240, 180)
+            val targetLuma120 = downscaleHalf(targetLuma240, LEVEL1_W, LEVEL1_H)
 
             // 3.3: 3-level pyramidal translation search
-            // Level 0 (Coarsest 120x90): Search +/- 16px
+            // Level 0 (Coarsest): Search +/- 16px
             val (dx120, dy120) = searchBestIntegerSAD(
                 ref = refLuma120,
                 target = targetLuma120,
-                w = 120,
-                h = 90,
+                w = LEVEL0_W,
+                h = LEVEL0_H,
                 centerDx = 0,
                 centerDy = 0,
                 radius = 16
             )
 
-            // Level 1 (Mid 240x180): Refine +/- 2px around 2 * dx120
+            // Level 1 (Mid): Refine +/- 2px around 2 * dx120
             val (dx240, dy240) = searchBestIntegerSAD(
                 ref = refLuma240,
                 target = targetLuma240,
-                w = 240,
-                h = 180,
+                w = LEVEL1_W,
+                h = LEVEL1_H,
                 centerDx = dx120 * 2,
                 centerDy = dy120 * 2,
                 radius = 2
             )
 
-            // Level 2 (Fine 480x360): Refine +/- 2px around 2 * dx240 with subpixel fit
+            // Level 2 (Fine, full working res): Refine +/- 2px around 2 * dx240 with subpixel fit
             val (subDx480, subDy480) = searchSubpixelSAD(
                 ref = refLuma480,
                 target = targetLuma480,
@@ -127,7 +140,7 @@ object BurstAligner {
             val dxFull = subDx480 * scaleX
             val dyFull = subDy480 * scaleY
 
-            // 3.4: Compute 16px tile robustness masks at 480x360
+            // 3.4: Compute 16px tile robustness masks
             val (maskBuffer, acceptFrac) = computeTileRobustnessMask(
                 ref = refLuma480,
                 target = targetLuma480,
@@ -158,7 +171,7 @@ object BurstAligner {
         )
     }
 
-    private fun downscaleYTo480x360(yBuf: ByteBuffer, origW: Int, origH: Int): ByteArray {
+    private fun downscaleYToWorkingResolution(yBuf: ByteBuffer, origW: Int, origH: Int): ByteArray {
         val out = ByteArray(WORKING_W * WORKING_H)
         val stepX = origW.toFloat() / WORKING_W.toFloat()
         val stepY = origH.toFloat() / WORKING_H.toFloat()
