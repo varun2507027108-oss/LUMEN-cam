@@ -90,11 +90,13 @@ object BurstAligner {
         val offsetsLogged = mutableListOf<String>()
         val accLogged = mutableListOf<String>()
         var droppedCount = 0
+        var alignedRefIndex = -1
 
         for (i in 0 until n) {
             if (i == bestRefIdx) {
                 val refMask = createFullAcceptMask()
                 alignedList.add(AlignedFrame(frames[i], 0f, 0f, 1.0f, refMask))
+                alignedRefIndex = alignedList.lastIndex
                 continue
             }
 
@@ -151,9 +153,9 @@ object BurstAligner {
             offsetsLogged.add("(%.2f,%.2f)".format(dxFull, dyFull))
             accLogged.add("${(acceptFrac * 100).toInt()}%")
 
-            // 3.5: Drop frame if accepted tile fraction < 25%
-            if (acceptFrac < 0.25f) {
-                Log.w(TAG, "Dropping frame $i: accepted tile fraction ${(acceptFrac * 100).toInt()}% is below 25% threshold (motion/occlusion)")
+            // 3.5: Drop frame only if usable tile confidence < 5% (severe global misregistration/blur)
+            if (acceptFrac < 0.05f) {
+                Log.w(TAG, "Dropping frame $i: mean confidence ${(acceptFrac * 100).toInt()}% is below 5% threshold (global motion/shake)")
                 droppedCount++
             } else {
                 alignedList.add(AlignedFrame(frames[i], dxFull, dyFull, acceptFrac, maskBuffer))
@@ -161,10 +163,10 @@ object BurstAligner {
         }
 
         val elapsedMs = SystemClock.elapsedRealtime() - startMs
-        Log.i(TAG, "CAPTURE burst-align: off=[${offsetsLogged.joinToString()}] acc=[${accLogged.joinToString()}] ms=$elapsedMs")
+        Log.i(TAG, "BURST ALIGN: origRefIndex=$bestRefIdx alignedRefIndex=$alignedRefIndex frames=$n kept=${alignedList.size} dropped=$droppedCount ms=${elapsedMs}ms off=[${offsetsLogged.joinToString()}] conf=[${accLogged.joinToString()}]")
 
         return AlignmentResult(
-            refIndex = bestRefIdx,
+            refIndex = if (alignedRefIndex != -1) alignedRefIndex else 0,
             alignedFrames = alignedList,
             droppedCount = droppedCount,
             elapsedMs = elapsedMs
@@ -366,23 +368,38 @@ object BurstAligner {
             }
         }
 
-        // Calculate median tile SAD
+        // Calculate median tile SAD representing typical noise floor and alignment residual
         val sortedSads = tileSads.clone().apply { sort() }
         val medianSad = sortedSads[TOTAL_TILES / 2]
-        val threshold = (medianSad * 1.5f + 4.0f)
+
+        // Low threshold: Noise floor boundary where alignment is robust -> confidence = 1.0
+        // High threshold: Boundary where significant subject motion/occlusion occurs -> confidence = 0.0
+        val lowThreshold = (medianSad * 1.2f + 1.0f).coerceAtLeast(1.0f)
+        val highThreshold = (medianSad * 2.5f + 6.0f).coerceAtLeast(lowThreshold + 3.0f)
+        val range = highThreshold - lowThreshold
 
         val maskBuffer = ByteBuffer.allocateDirect(TILES_X * TILES_Y).order(ByteOrder.nativeOrder())
-        var acceptedCount = 0
+        var totalConfidence = 0.0f
 
         for (i in 0 until TOTAL_TILES) {
-            val isAccepted = tileSads[i] <= threshold
-            if (isAccepted) acceptedCount++
-            maskBuffer.put(if (isAccepted) 0xFF.toByte() else 0x00.toByte())
+            val sad = tileSads[i]
+            val confidence = when {
+                sad <= lowThreshold -> 1.0f
+                sad >= highThreshold -> 0.0f
+                else -> {
+                    val t = (sad - lowThreshold) / range
+                    // Smooth Hermite interpolation (smoothstep) from 1.0 down to 0.0
+                    1.0f - (t * t * (3.0f - 2.0f * t))
+                }
+            }
+            totalConfidence += confidence
+            val byteVal = (confidence * 255.0f).roundToInt().coerceIn(0, 255).toByte()
+            maskBuffer.put(byteVal)
         }
         maskBuffer.rewind()
 
-        val acceptFrac = acceptedCount.toFloat() / TOTAL_TILES.toFloat()
-        return Pair(maskBuffer, acceptFrac)
+        val meanConfidence = totalConfidence / TOTAL_TILES.toFloat()
+        return Pair(maskBuffer, meanConfidence)
     }
 
     fun createFullAcceptMask(): ByteBuffer {
