@@ -482,6 +482,14 @@ class Camera2CaptureEngine(
             }
         }
 
+        if (isSimpleHdrEnabled && !isManualExposure) {
+            val sceneModes = cameraCharacteristics?.get(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
+            if (sceneModes != null && sceneModes.contains(CameraCharacteristics.CONTROL_SCENE_MODE_HDR)) {
+                builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_USE_SCENE_MODE)
+                builder.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_HDR)
+            }
+        }
+
         builder.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)
         builder.set(CaptureRequest.CONTROL_AE_LOCK, isAeAwbLocked)
         builder.set(CaptureRequest.CONTROL_AWB_LOCK, isAeAwbLocked)
@@ -633,6 +641,21 @@ class Camera2CaptureEngine(
     @Volatile
     var isRawCaptureEnabled: Boolean = false
 
+    @Volatile
+    var isSimpleHdrEnabled: Boolean = false
+
+    fun applySimpleHdrMode(enabled: Boolean) {
+        isSimpleHdrEnabled = enabled
+        startRepeatingPreview()
+        Log.i(TAG, "Simple HDR mode updated: isSimpleHdrEnabled=$enabled")
+    }
+
+    val isHdrSceneModeSupported: Boolean
+        get() {
+            val modes = cameraCharacteristics?.get(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
+            return modes != null && modes.contains(CameraCharacteristics.CONTROL_SCENE_MODE_HDR)
+        }
+
     /**
      * Captures a single still from the reader (YUV or JPEG) and converts to upright Bitmap.
      * If RAW stream is enabled, simultaneously captures a RAW_SENSOR DNG frame.
@@ -729,6 +752,9 @@ class Camera2CaptureEngine(
                     addTarget(reader.surface)
                     rawReader?.let { addTarget(it.surface) }
                     applyPreviewSettings(this)
+                    if (isSimpleHdrEnabled) {
+                        set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_HIGH_QUALITY)
+                    }
                     set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
                     set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
                     set(CaptureRequest.JPEG_QUALITY, 95.toByte())

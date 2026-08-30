@@ -45,6 +45,12 @@ import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
+enum class BurstDebugStage {
+    FULL_PIPELINE,
+    BURST_MERGE_RAW,
+    HDR_INTERMEDIATE
+}
+
 data class GpuTelemetry(
     val fps: Float = 0f,
     val frameTimeMs: Float = 0f,
@@ -125,6 +131,7 @@ class AuroraRenderer(
     @Volatile var lookHalationThreshold: Float = 0.75f
     @Volatile private var _isLookPrecision16f: Boolean = true
     val isLookPrecision16f: Boolean get() = _isLookPrecision16f
+    @Volatile var burstDebugStage: BurstDebugStage = BurstDebugStage.FULL_PIPELINE
 
     // Temporal Echo parameters
     @Volatile var temporalEchoDecay: Float = 0.75f
@@ -979,6 +986,8 @@ class AuroraRenderer(
 
             val mergePass = burstMergePass ?: BurstMergePass().also { burstMergePass = it }
 
+            Log.i(TAG, "BURST PIPELINE DIAGNOSTIC: stage=$burstDebugStage frames=${alignmentResult.alignedFrames.size} refIndex=${alignmentResult.refIndex} dropped=${alignmentResult.droppedCount} is16F=$isLookPrecision16f")
+
             // 1. Intermediate merge FBO honors look_precision_16f
             val mergeFbo = Fbo(width, height, useHalfFloat = isLookPrecision16f)
             mergeFbo.bind()
@@ -991,6 +1000,43 @@ class AuroraRenderer(
                 chromaSoften = true
             )
             mergeFbo.unbind(viewWidth, viewHeight)
+
+            if (burstDebugStage == BurstDebugStage.BURST_MERGE_RAW) {
+                // Diagnostic Stage 1: BurstMergePass raw fused output (pre-LTM / pre-HDR)
+                val outFbo = if (mergeFbo.isHalfFloat) {
+                    val tempRgba8 = Fbo(width, height, useHalfFloat = false)
+                    tempRgba8.bind()
+                    GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                    filmCurvePass.render(
+                        srcTextureId = mergeFbo.textureId,
+                        lutTextureId = lutTexture.textureId,
+                        lutSize = lutTexture.size,
+                        domainMin = lutTexture.domainMin,
+                        domainMax = lutTexture.domainMax,
+                        intensity = 0.0f,
+                        grain = 0.0f,
+                        vignette = 0.0f,
+                        halation = 0.0f,
+                        halationThreshold = 0.75f,
+                        timeSeconds = 0f,
+                        aspectRatio = width.toFloat() / height.toFloat(),
+                        width = width,
+                        height = height
+                    )
+                    tempRgba8.unbind(viewWidth, viewHeight)
+                    tempRgba8
+                } else {
+                    mergeFbo
+                }
+                val rawBitmap = readFboToBitmap(outFbo, flipY = false)
+                if (outFbo != mergeFbo) {
+                    outFbo.release()
+                }
+                mergeFbo.release()
+                CaptureSaver.logSizeGuard(rawBitmap.width, rawBitmap.height, expectedWidth = width, expectedHeight = height)
+                onFinished(rawBitmap)
+                return@queueEvent
+            }
 
             // 2. Local Tone Mapping (LTM) + Edge-Preserving Sharpening Pass
             val ltmFbo = Fbo(width, height, useHalfFloat = isLookPrecision16f)
@@ -1007,7 +1053,44 @@ class AuroraRenderer(
             ltmFbo.unbind(viewWidth, viewHeight)
             mergeFbo.release()
 
-            // 3. Signature Look & Chromatic Aberration Pass
+            if (burstDebugStage == BurstDebugStage.HDR_INTERMEDIATE) {
+                // Diagnostic Stage 2: LTM output before color grading
+                val outFbo = if (ltmFbo.isHalfFloat) {
+                    val tempRgba8 = Fbo(width, height, useHalfFloat = false)
+                    tempRgba8.bind()
+                    GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                    filmCurvePass.render(
+                        srcTextureId = ltmFbo.textureId,
+                        lutTextureId = lutTexture.textureId,
+                        lutSize = lutTexture.size,
+                        domainMin = lutTexture.domainMin,
+                        domainMax = lutTexture.domainMax,
+                        intensity = 0.0f,
+                        grain = 0.0f,
+                        vignette = 0.0f,
+                        halation = 0.0f,
+                        halationThreshold = 0.75f,
+                        timeSeconds = 0f,
+                        aspectRatio = width.toFloat() / height.toFloat(),
+                        width = width,
+                        height = height
+                    )
+                    tempRgba8.unbind(viewWidth, viewHeight)
+                    tempRgba8
+                } else {
+                    ltmFbo
+                }
+                val intermediateBitmap = readFboToBitmap(outFbo, flipY = false)
+                if (outFbo != ltmFbo) {
+                    outFbo.release()
+                }
+                ltmFbo.release()
+                CaptureSaver.logSizeGuard(intermediateBitmap.width, intermediateBitmap.height, expectedWidth = width, expectedHeight = height)
+                onFinished(intermediateBitmap)
+                return@queueEvent
+            }
+
+            // 3. Signature Look & Chromatic Aberration Pass (Stage 3: FULL_PIPELINE)
             val finalBitmap: Bitmap
             if ((isLookEnabled && lookIntensity > 0.0f) || chromaticAberrationIntensity > 0.001f) {
                 val gradeFbo = Fbo(width, height, useHalfFloat = false)
@@ -1071,7 +1154,32 @@ class AuroraRenderer(
                 gradeFbo.unbind(viewWidth, viewHeight)
                 gradeFbo.release()
             } else {
-                finalBitmap = readFboToBitmap(ltmFbo, flipY = false)
+                if (ltmFbo.isHalfFloat) {
+                    val tempRgba8 = Fbo(width, height, useHalfFloat = false)
+                    tempRgba8.bind()
+                    GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                    filmCurvePass.render(
+                        srcTextureId = ltmFbo.textureId,
+                        lutTextureId = lutTexture.textureId,
+                        lutSize = lutTexture.size,
+                        domainMin = lutTexture.domainMin,
+                        domainMax = lutTexture.domainMax,
+                        intensity = 0.0f,
+                        grain = 0.0f,
+                        vignette = 0.0f,
+                        halation = 0.0f,
+                        halationThreshold = 0.75f,
+                        timeSeconds = 0f,
+                        aspectRatio = width.toFloat() / height.toFloat(),
+                        width = width,
+                        height = height
+                    )
+                    tempRgba8.unbind(viewWidth, viewHeight)
+                    finalBitmap = readFboToBitmap(tempRgba8, flipY = false)
+                    tempRgba8.release()
+                } else {
+                    finalBitmap = readFboToBitmap(ltmFbo, flipY = false)
+                }
             }
 
             ltmFbo.release()

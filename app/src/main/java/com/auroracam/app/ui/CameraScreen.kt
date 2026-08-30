@@ -155,6 +155,7 @@ fun CameraScreen() {
     var isLegacyJpeg by remember { mutableStateOf(cameraController.isLegacyJpegPath()) }
     var isPreviewBufferHd by remember { mutableStateOf(cameraController.isPreviewBufferHd()) }
     var isLookPrecision16f by remember { mutableStateOf(cameraController.isLookPrecision16f()) }
+    var isSimpleHdr by remember { mutableStateOf(cameraController.isSimpleHdrEnabled()) }
     var isBurstStack by remember { mutableStateOf(cameraController.isBurstStack()) }
     var manualShutterNanos by remember { mutableLongStateOf(0L) }
     var manualShutterLabel by remember { mutableStateOf("AUTO") }
@@ -567,7 +568,7 @@ fun CameraScreen() {
                                 }
                             }
                         } else {
-                            captureStatus = "Capturing..."
+                            captureStatus = if (isSimpleHdr) "Capturing HDR..." else "Capturing..."
                             cameraController.takePictureBitmap(
                                 onBitmapCaptured = { rawBmp ->
                                     if (rawBmp != null) {
@@ -580,7 +581,8 @@ fun CameraScreen() {
                                                     isLegacy = isLegacyJpeg,
                                                     lookName = activeLutName,
                                                     isLookEnabled = isLookEnabled,
-                                                    intensity = lookIntensity
+                                                    intensity = lookIntensity,
+                                                    encOverride = if (isSimpleHdr) "HDR" else null
                                                 )
                                                 val uri = CaptureSaver.saveBitmap(
                                                     context = context,
@@ -910,8 +912,14 @@ fun CameraScreen() {
                 isRawCaptureEnabled = next
                 cameraController.setRawCaptureEnabled(next)
             },
-            isHdrEnabled = isBurstStack,
-            onHdrToggled = {
+            isSimpleHdrEnabled = isSimpleHdr,
+            onSimpleHdrToggled = {
+                val next = !isSimpleHdr
+                isSimpleHdr = next
+                cameraController.setSimpleHdrEnabled(next)
+            },
+            isHdrStackEnabled = isBurstStack,
+            onHdrStackToggled = {
                 val next = !isBurstStack
                 isBurstStack = next
                 cameraController.setBurstStack(next)

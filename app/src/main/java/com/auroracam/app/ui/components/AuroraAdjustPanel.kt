@@ -115,8 +115,10 @@ fun AuroraAdjustPanel(
     onFocusPeakingToggled: () -> Unit,
     isRawEnabled: Boolean,
     onRawToggled: () -> Unit,
-    isHdrEnabled: Boolean,
-    onHdrToggled: () -> Unit,
+    isSimpleHdrEnabled: Boolean = false,
+    onSimpleHdrToggled: () -> Unit = {},
+    isHdrStackEnabled: Boolean = false,
+    onHdrStackToggled: () -> Unit = {},
     is16BitFboEnabled: Boolean,
     on16BitFboToggled: () -> Unit,
     formatMode: FormatMode,
@@ -655,7 +657,7 @@ fun AuroraAdjustPanel(
                             fontWeight = FontWeight.SemiBold
                         )
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             // RAW Toggle
                             Text(
                                 text = "RAW DNG",
@@ -671,25 +673,43 @@ fun AuroraAdjustPanel(
                                         view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                         onRawToggled()
                                     }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .padding(horizontal = 6.dp, vertical = 4.dp)
                             )
 
-                            // HDR Toggle
+                            // Simple Single-Shot HDR Toggle
                             Text(
-                                text = "HDR STACK",
-                                color = if (isHdrEnabled) AuroraBrass else Ash,
+                                text = "HDR",
+                                color = if (isSimpleHdrEnabled) AuroraBrass else Ash,
                                 fontSize = 9.sp,
                                 fontFamily = FontFamily.Monospace,
-                                fontWeight = if (isHdrEnabled) FontWeight.Bold else FontWeight.Normal,
+                                fontWeight = if (isSimpleHdrEnabled) FontWeight.Bold else FontWeight.Normal,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isHdrEnabled) GraphiteSurface else DarkGraphite)
-                                    .border(0.5.dp, if (isHdrEnabled) AuroraBrass else HairlineBorder, RoundedCornerShape(6.dp))
+                                    .background(if (isSimpleHdrEnabled) GraphiteSurface else DarkGraphite)
+                                    .border(0.5.dp, if (isSimpleHdrEnabled) AuroraBrass else HairlineBorder, RoundedCornerShape(6.dp))
                                     .clickable {
                                         view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                        onHdrToggled()
+                                        onSimpleHdrToggled()
                                     }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                            )
+
+                            // Multi-Frame Burst Stack HDR Toggle
+                            Text(
+                                text = "HDR STACK",
+                                color = if (isHdrStackEnabled) AuroraBrass else Ash,
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = if (isHdrStackEnabled) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isHdrStackEnabled) GraphiteSurface else DarkGraphite)
+                                    .border(0.5.dp, if (isHdrStackEnabled) AuroraBrass else HairlineBorder, RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                        onHdrStackToggled()
+                                    }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp)
                             )
 
                             // 16-Bit FBO Toggle
@@ -707,7 +727,7 @@ fun AuroraAdjustPanel(
                                         view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                         on16BitFboToggled()
                                     }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .padding(horizontal = 6.dp, vertical = 4.dp)
                             )
                         }
                     }
