@@ -117,5 +117,65 @@ class ColorScienceAndLutTest {
         assertEquals(0.0f, parsed.domainMin[0])
         assertEquals(1.0f, parsed.domainMax[0])
     }
+
+    @Test
+    fun testYuvBufferPoolAcquireReleaseAndClear() {
+        com.auroracam.app.camera.burst.YuvBufferPool.clear()
+
+        val buf1 = com.auroracam.app.camera.burst.YuvBufferPool.acquire(1024)
+        assertEquals(1024, buf1.capacity())
+        assertTrue(buf1.isDirect)
+
+        // Write some dummy data and modify position
+        buf1.put(42.toByte())
+        assertEquals(1, buf1.position())
+
+        // Release back to pool
+        com.auroracam.app.camera.burst.YuvBufferPool.release(buf1)
+        assertEquals(0, buf1.position())
+
+        // Reacquire should return the exact same buffer cleared
+        val buf2 = com.auroracam.app.camera.burst.YuvBufferPool.acquire(1024)
+        assertTrue("Reacquired buffer should be reused instance", buf1 === buf2)
+        assertEquals(0, buf2.position())
+
+        com.auroracam.app.camera.burst.YuvBufferPool.release(buf2)
+        com.auroracam.app.camera.burst.YuvBufferPool.clear()
+    }
+
+    @Test
+    fun testRawYuvFrameReleaseReturnsBuffersToPool() {
+        com.auroracam.app.camera.burst.YuvBufferPool.clear()
+
+        val yBuf = com.auroracam.app.camera.burst.YuvBufferPool.acquire(100)
+        val uBuf = com.auroracam.app.camera.burst.YuvBufferPool.acquire(25)
+        val vBuf = com.auroracam.app.camera.burst.YuvBufferPool.acquire(25)
+
+        val frame = com.auroracam.app.camera.burst.RawYuvFrame(
+            width = 10,
+            height = 10,
+            yBuffer = yBuf,
+            uBuffer = uBuf,
+            vBuffer = vBuf,
+            yRowStride = 10,
+            uvRowStride = 5,
+            uvPixelStride = 1,
+            timestampNs = 12345L,
+            exposureTimeNs = 1000L,
+            iso = 100
+        )
+
+        frame.release()
+
+        val reacquiredY = com.auroracam.app.camera.burst.YuvBufferPool.acquire(100)
+        val reacquiredU = com.auroracam.app.camera.burst.YuvBufferPool.acquire(25)
+        val reacquiredV = com.auroracam.app.camera.burst.YuvBufferPool.acquire(25)
+
+        assertTrue(reacquiredY === yBuf)
+        assertTrue(reacquiredU === uBuf)
+        assertTrue(reacquiredV === vBuf)
+
+        com.auroracam.app.camera.burst.YuvBufferPool.clear()
+    }
 }
 
