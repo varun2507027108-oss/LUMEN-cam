@@ -40,6 +40,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
@@ -58,6 +60,40 @@ class Camera2CaptureEngine(
         val PREFERRED_PREVIEW_SIZE = Size(1600, 1200)
         val PREFERRED_PREVIEW_HD_SIZE = Size(1920, 1440)
         val PREFERRED_CAPTURE_SIZE = Size(3200, 2400)
+    }
+
+    private data class StreamUseCaseSupport(
+        val canUseStreamUseCases: Boolean,
+        val supportsPreview: Boolean,
+        val supportsStillCapture: Boolean
+    )
+
+    private fun resolveStreamUseCaseSupport(
+        characteristics: CameraCharacteristics
+    ): StreamUseCaseSupport {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+            return StreamUseCaseSupport(
+                canUseStreamUseCases = false,
+                supportsPreview = false,
+                supportsStillCapture = false
+            )
+        }
+
+        val available = characteristics.get(
+            CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES
+        )?.toSet().orEmpty()
+
+        val previewUseCase =
+            CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_PREVIEW.toLong()
+
+        val stillUseCase =
+            CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
+
+        return StreamUseCaseSupport(
+            canUseStreamUseCases = available.isNotEmpty(),
+            supportsPreview = previewUseCase in available,
+            supportsStillCapture = stillUseCase in available
+        )
     }
 
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -87,6 +123,10 @@ class Camera2CaptureEngine(
 
     var resolvedRawSize: Size? = null
         private set
+
+    private val cameraSessionExecutor: ExecutorService by lazy {
+        Executors.newSingleThreadExecutor()
+    }
 
     val cameraCharacteristics: CameraCharacteristics?
         get() = characteristics
@@ -339,21 +379,28 @@ class Camera2CaptureEngine(
                 // API 33+: tag each stream with its Stream Use Case so the camera HAL
                 // can apply per-stream optimization (responsive preview vs. high-quality
                 // still capture) instead of treating every surface identically.
+                val useCaseSupport = characteristics?.let { resolveStreamUseCaseSupport(it) }
                 val outputConfigs = mutableListOf<android.hardware.camera2.params.OutputConfiguration>()
 
                 val previewConfig = android.hardware.camera2.params.OutputConfiguration(preview).apply {
-                    streamUseCase = CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_PREVIEW.toLong()
+                    if (useCaseSupport?.supportsPreview == true) {
+                        streamUseCase = CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_PREVIEW.toLong()
+                    }
                 }
                 outputConfigs.add(previewConfig)
 
                 val yuvConfig = android.hardware.camera2.params.OutputConfiguration(yuvReader.surface).apply {
-                    streamUseCase = CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
+                    if (useCaseSupport?.supportsStillCapture == true) {
+                        streamUseCase = CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
+                    }
                 }
                 outputConfigs.add(yuvConfig)
 
                 jpegReader?.let {
                     val jpegConfig = android.hardware.camera2.params.OutputConfiguration(it.surface).apply {
-                        streamUseCase = CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
+                        if (useCaseSupport?.supportsStillCapture == true) {
+                            streamUseCase = CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
+                        }
                     }
                     outputConfigs.add(jpegConfig)
                 }
@@ -367,7 +414,7 @@ class Camera2CaptureEngine(
                 val sessionConfig = android.hardware.camera2.params.SessionConfiguration(
                     android.hardware.camera2.params.SessionConfiguration.SESSION_REGULAR,
                     outputConfigs,
-                    java.util.concurrent.Executors.newSingleThreadExecutor(),
+                    cameraSessionExecutor,
                     sessionCallback
                 )
                 device.createCaptureSession(sessionConfig)
@@ -988,6 +1035,7 @@ class Camera2CaptureEngine(
             captureYuvReader?.close()
             captureJpegReader?.close()
             previewSurface?.release()
+            cameraSessionExecutor.shutdown()
         } catch (e: Exception) {
             Log.e(TAG, "Error during engine release: ${e.message}")
         }

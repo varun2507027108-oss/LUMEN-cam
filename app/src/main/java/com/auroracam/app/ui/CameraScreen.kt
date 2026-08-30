@@ -143,7 +143,6 @@ fun CameraScreen() {
     var lightTrailDecay by remember { mutableFloatStateOf(0.94f) }
     var lightTrailBlendMode by remember { mutableIntStateOf(0) }
     var chromaticAberration by remember { mutableFloatStateOf(0.0f) }
-    var currentWheelParam by remember { mutableStateOf(WheelParameter.LOOK_INTENSITY) }
 
     // Signature Look State
     var isLookEnabled by remember { mutableStateOf(true) }

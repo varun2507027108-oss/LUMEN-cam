@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
  */
 object YuvBufferPool {
     private const val TAG = "YuvBufferPool"
+    private const val MAX_RETAINED_BUFFERS = 18
     private val freeBuffers = ConcurrentLinkedQueue<ByteBuffer>()
 
     fun acquire(capacity: Int): ByteBuffer {
@@ -32,7 +33,9 @@ object YuvBufferPool {
 
     fun release(buffer: ByteBuffer) {
         buffer.clear()
-        freeBuffers.offer(buffer)
+        if (freeBuffers.size < MAX_RETAINED_BUFFERS) {
+            freeBuffers.offer(buffer)
+        }
     }
 
     /** Drops all pooled buffers, e.g. on camera close / low-memory signal. */

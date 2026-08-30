@@ -1,5 +1,9 @@
 # Lumen
 
+<p align="center">
+  <img src="art/logo.png" width="128" height="128" alt="Lumen Logo" />
+</p>
+
 > Live double exposure, real-time procedural 3D LUT color grading, temporal echo, motion-only exposure, and light trail accumulation — rendered entirely on the GPU in the viewfinder before pressing the shutter.
 
 Lumen is a cinema-grade, tactile creative camera application for Android built with **Jetpack Compose**, **direct Camera2 HAL integration**, and **OpenGL ES 3.0**.
