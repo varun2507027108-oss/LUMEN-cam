@@ -46,9 +46,16 @@ import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
 enum class BurstDebugStage {
-    FULL_PIPELINE,
-    BURST_MERGE_RAW,
-    HDR_INTERMEDIATE
+    BURST_DEBUG_NONE,
+    BURST_DEBUG_AFTER_MERGE,
+    BURST_DEBUG_AFTER_HDR,
+    BURST_DEBUG_FINAL;
+
+    companion object {
+        val FULL_PIPELINE get() = BURST_DEBUG_FINAL
+        val BURST_MERGE_RAW get() = BURST_DEBUG_AFTER_MERGE
+        val HDR_INTERMEDIATE get() = BURST_DEBUG_AFTER_HDR
+    }
 }
 
 data class GpuTelemetry(
@@ -131,7 +138,7 @@ class AuroraRenderer(
     @Volatile var lookHalationThreshold: Float = 0.75f
     @Volatile private var _isLookPrecision16f: Boolean = true
     val isLookPrecision16f: Boolean get() = _isLookPrecision16f
-    @Volatile var burstDebugStage: BurstDebugStage = BurstDebugStage.FULL_PIPELINE
+    @Volatile var burstDebugStage: BurstDebugStage = BurstDebugStage.BURST_DEBUG_NONE
 
     // Temporal Echo parameters
     @Volatile var temporalEchoDecay: Float = 0.75f
@@ -1001,7 +1008,7 @@ class AuroraRenderer(
             )
             mergeFbo.unbind(viewWidth, viewHeight)
 
-            if (burstDebugStage == BurstDebugStage.BURST_MERGE_RAW) {
+            if (burstDebugStage == BurstDebugStage.BURST_DEBUG_AFTER_MERGE || burstDebugStage == BurstDebugStage.BURST_MERGE_RAW) {
                 // Diagnostic Stage 1: BurstMergePass raw fused output (pre-LTM / pre-HDR)
                 val outFbo = if (mergeFbo.isHalfFloat) {
                     val tempRgba8 = Fbo(width, height, useHalfFloat = false)
@@ -1053,7 +1060,7 @@ class AuroraRenderer(
             ltmFbo.unbind(viewWidth, viewHeight)
             mergeFbo.release()
 
-            if (burstDebugStage == BurstDebugStage.HDR_INTERMEDIATE) {
+            if (burstDebugStage == BurstDebugStage.BURST_DEBUG_AFTER_HDR || burstDebugStage == BurstDebugStage.HDR_INTERMEDIATE) {
                 // Diagnostic Stage 2: LTM output before color grading
                 val outFbo = if (ltmFbo.isHalfFloat) {
                     val tempRgba8 = Fbo(width, height, useHalfFloat = false)
